@@ -3,6 +3,7 @@ appId: com.android.settings
 tags:
   - demo
 ---
+- stopApp: com.google.android.settings.intelligence
 - launchApp:
     clearState: false
     permissions:

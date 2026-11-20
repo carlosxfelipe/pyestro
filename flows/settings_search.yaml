@@ -7,15 +7,19 @@ tags:
 env:
   QUERY: display
 ---
+- stopApp: com.google.android.settings.intelligence
 - launchApp
 - tapOn: "Search settings"
+- waitForAnimationToEnd
 - inputText: ${QUERY}
 - extendedWaitUntil:
     visible: "Display.*"
     timeout: 5000
 - tapOn:
-    text: "Display"
-    index: 0
+    text: "Display & touch"
+    index: 1
 - assertVisible: "Brightness.*"
 - takeScreenshot: settings_display
 - back
+- stopApp: com.google.android.settings.intelligence
+- stopApp
