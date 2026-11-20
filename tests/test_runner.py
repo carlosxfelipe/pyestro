@@ -465,3 +465,71 @@ def test_set_location_calls_driver(write_flow, tmp_path):
     )
     assert runner(driver, tmp_path).run(flow).ok
     assert ("set_location", 52.36, 4.88) in driver.calls
+
+
+def test_travel_interpolates_points(write_flow, tmp_path):
+    driver = FakeDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n- travel:\n    points:\n"
+        "      - '0.0, 0.0'\n      - '0.0, 0.01'\n    speed: 1000\n    timeout: 500\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    locs = calls(driver, "set_location")
+    assert locs[0] == ("set_location", 0.0, 0.0)
+    assert locs[-1] == ("set_location", 0.0, 0.01)
+
+
+def test_assert_screenshot_passes_and_fails_by_threshold(write_flow, tmp_path):
+    from pyestro.android import compare_png
+
+    from .test_review_fixes import _make_rgba_png
+
+    ref_png = _make_rgba_png(10, 10)
+    diff_png = _make_rgba_png(10, 10)
+    # 100% match against self, 0% when comparing different sizes raises AndroidError
+    assert compare_png(ref_png, ref_png) == 100.0
+
+    ref_file = tmp_path / "baseline.png"
+    ref_file.write_bytes(ref_png)
+
+    class ShotDriver(FakeDriver):
+        def __init__(self, png_bytes: bytes, *screens):
+            super().__init__(*screens)
+            self.png_bytes = png_bytes
+
+        def screenshot(self, path: Path) -> Path:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(self.png_bytes)
+            return p
+
+    ok_flow = write_flow("appId: a.b\n---\n- assertScreenshot: baseline.png\n")
+    assert runner(ShotDriver(diff_png), tmp_path).run(ok_flow).ok
+
+    # Crop a 10x10 screen to [0,0][5,5] and compare against a 5x5 baseline.
+    import struct
+    import zlib
+
+    from pyestro.android import _PNG_SIGNATURE, _png_chunk
+
+    raw_zero = b"\x00" + b"\x00\x00\x00\x00" * 5
+    bad_5x5 = b"".join(
+        [
+            _PNG_SIGNATURE,
+            _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 5, 5, 8, 6, 0, 0, 0)),
+            _png_chunk(b"IDAT", zlib.compress(raw_zero * 5)),
+            _png_chunk(b"IEND", b""),
+        ]
+    )
+    (tmp_path / "card.png").write_bytes(bad_5x5)
+    fail_flow = write_flow(
+        "appId: a.b\n---\n- assertScreenshot:\n    path: card.png\n"
+        "    cropOn: Card\n    thresholdPercentage: 95\n"
+    )
+    res = runner(
+        ShotDriver(ref_png, hierarchy(node("Card", bounds="[0,0][5,5]"))),
+        tmp_path,
+    ).run(fail_flow)
+    assert not res.ok
+    assert "below 95%" in (res.steps[0].error or "")

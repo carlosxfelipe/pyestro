@@ -127,10 +127,10 @@ env:
 
 ## Supported commands
 
-- **App lifecycle & device:** `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op), `setPermissions`, `openLink`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `setDarkMode`, `toggleDarkMode`, `addMedia`, `setLocation` (emulators only)
+- **App lifecycle & device:** `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op), `setPermissions`, `openLink`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `setDarkMode`, `toggleDarkMode`, `addMedia`, `setLocation` (emulators only), `travel` (emulators only)
 - **Gestures & navigation:** `tapOn`, `doubleTapOn`, `longPressOn`, `scroll`, `scrollUntilVisible`, `swipe`, `back`, `pressKey`, `hideKeyboard`
 - **Text input & clipboard:** `inputText`, `inputRandomText`, `inputRandomNumber`, `inputRandomEmail`, `inputRandomPersonName`, `eraseText`, `copyTextFrom`, `pasteText`, `setClipboard` (with `${maestro.copiedText}`)
-- **Assertions & waits:** `assertVisible`, `assertNotVisible`, `assertDarkMode`, `assertLightMode`, `extendedWaitUntil`, `waitForAnimationToEnd`
+- **Assertions & waits:** `assertVisible`, `assertNotVisible`, `assertDarkMode`, `assertLightMode`, `assertScreenshot`, `extendedWaitUntil`, `waitForAnimationToEnd`
 - **Flow control & subflows:** `repeat` (`times` / `while`), `retry`, `runFlow` (`file` / `commands` / `when` / `env`)
 - **Media & header:** `takeScreenshot`, `startRecording`, `stopRecording`, `onFlowStart`, `onFlowComplete`, `env`, `tags`, and `${VAR}` interpolation
 

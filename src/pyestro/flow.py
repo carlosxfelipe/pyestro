@@ -123,13 +123,11 @@ def interpolate_data(
 UNSUPPORTED_COMMANDS = frozenset(
     {
         "assertTrue",
-        "assertScreenshot",
         "assertWithAI",
         "assertNoDefectsWithAI",
         "extractTextWithAI",
         "evalScript",
         "runScript",
-        "travel",
         "openBrowser",
     }
 )
@@ -769,6 +767,86 @@ def _coordinate(cmd: str, key: str, value: Any, limit: float) -> float:
     return number
 
 
+def _p_assert_screenshot(cmd: str, value: Any) -> Parsed:
+    if isinstance(value, str):
+        if not value.strip():
+            raise FlowError(f"{cmd}: provide the reference screenshot path.")
+        return (
+            {"path": value.strip(), "cropOn": None, "thresholdPercentage": 95.0},
+            None,
+            False,
+        )
+    if not isinstance(value, dict):
+        raise FlowError(f"{cmd}: provide a path or a map with 'path'.")
+    _check_keys(
+        cmd, value, {"path", "cropOn", "thresholdPercentage", "label", "optional"}
+    )
+    if "path" not in value:
+        raise FlowError(f"{cmd}: provide 'path'.")
+    path = _text(cmd, "path", value["path"]).strip()
+    if not path:
+        raise FlowError(f"{cmd}: provide 'path'.")
+    threshold = 95.0
+    if "thresholdPercentage" in value:
+        raw_t = value["thresholdPercentage"]
+        if isinstance(raw_t, bool):
+            raise FlowError(f"{cmd}: 'thresholdPercentage' must be between 0 and 100.")
+        try:
+            threshold = float(raw_t)
+        except (TypeError, ValueError):
+            raise FlowError(
+                f"{cmd}: 'thresholdPercentage' must be between 0 and 100."
+            ) from None
+        if not 0 <= threshold <= 100:
+            raise FlowError(f"{cmd}: 'thresholdPercentage' must be between 0 and 100.")
+    crop_on = _selector(cmd, value["cropOn"]) if "cropOn" in value else None
+    optional = (
+        _bool(cmd, "optional", value["optional"]) if "optional" in value else False
+    )
+    return (
+        {"path": path, "cropOn": crop_on, "thresholdPercentage": threshold},
+        _label(cmd, value),
+        optional,
+    )
+
+
+def _p_travel(cmd: str, value: Any) -> Parsed:
+    if not isinstance(value, dict):
+        raise FlowError(f"{cmd}: use a map with 'points'.")
+    _check_keys(cmd, value, {"points", "speed", "timeout", "label"})
+    raw_points = value.get("points")
+    if not isinstance(raw_points, list) or not raw_points:
+        raise FlowError(f"{cmd}: 'points' must be a non-empty list of 'lat, lon'.")
+    points: list[tuple[float, float]] = []
+    for item in raw_points:
+        if not isinstance(item, str) or "," not in item:
+            raise FlowError(f"{cmd}: each point must be 'latitude, longitude'.")
+        lat_s, lon_s = item.split(",", 1)
+        points.append(
+            (
+                _coordinate(cmd, "latitude", lat_s.strip(), 90),
+                _coordinate(cmd, "longitude", lon_s.strip(), 180),
+            )
+        )
+    speed = 50.0
+    if "speed" in value:
+        raw_s = value["speed"]
+        if isinstance(raw_s, bool):
+            raise FlowError(f"{cmd}: 'speed' must be a positive number.")
+        try:
+            speed = float(raw_s)
+        except (TypeError, ValueError):
+            raise FlowError(f"{cmd}: 'speed' must be a positive number.") from None
+        if speed <= 0:
+            raise FlowError(f"{cmd}: 'speed' must be > 0.")
+    timeout = _ms(cmd, "timeout", value["timeout"]) if "timeout" in value else 15.0
+    return (
+        {"points": points, "speed": speed, "timeout": timeout},
+        _label(cmd, value),
+        False,
+    )
+
+
 def _p_set_location(cmd: str, value: Any) -> Parsed:
     if not isinstance(value, dict):
         raise FlowError(f"{cmd}: use a map with 'latitude' and 'longitude'.")
@@ -828,6 +906,8 @@ _PARSERS = {
     "pasteText": _p_noarg,
     "setClipboard": _p_set_clipboard,
     "setLocation": _p_set_location,
+    "travel": _p_travel,
+    "assertScreenshot": _p_assert_screenshot,
     "repeat": _p_repeat,
     "retry": _p_retry,
     "runFlow": _p_run_flow,

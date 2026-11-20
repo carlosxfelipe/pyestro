@@ -282,7 +282,12 @@ class TestClipboardAndLocation:
             "- pasteText\n"
             "- setClipboard: abc\n"
             "- inputText: ${maestro.copiedText}\n"
-            "- setLocation:\n    latitude: -23.55\n    longitude: '-46.63'\n",
+            "- setLocation:\n    latitude: -23.55\n    longitude: '-46.63'\n"
+            "- travel:\n    points:\n      - '48.85, 2.29'\n      - '48.86, 2.30'\n"
+            "    speed: 100\n    timeout: 5000\n"
+            "- assertScreenshot: home.png\n"
+            "- assertScreenshot:\n    path: card.png\n"
+            "    thresholdPercentage: 98\n    cropOn: Card\n",
         )
         assert commands[0].optional is True
         assert commands[2].name == "pasteText"
@@ -290,6 +295,18 @@ class TestClipboardAndLocation:
         # Resolved at run time, so the token survives compilation.
         assert commands[4].spec == {"text": "${maestro.copiedText}"}
         assert commands[5].spec == {"latitude": -23.55, "longitude": -46.63}
+        assert commands[6].spec == {
+            "points": [(48.85, 2.29), (48.86, 2.30)],
+            "speed": 100.0,
+            "timeout": 5.0,
+        }
+        assert commands[7].spec == {
+            "path": "home.png",
+            "cropOn": None,
+            "thresholdPercentage": 95.0,
+        }
+        assert commands[8].spec["thresholdPercentage"] == 98.0
+        assert commands[8].spec["cropOn"].text == "Card"
 
     @pytest.mark.parametrize(
         "yaml_cmd",
@@ -304,15 +321,18 @@ class TestClipboardAndLocation:
             "- setLocation:\n    latitude: 91\n    longitude: 0",
             "- setLocation:\n    latitude: 0\n    longitude: abc",
             "- setLocation:\n    latitude: 0\n    longitude: 0\n    alt: 1",
+            "- travel: 1",
+            "- travel:\n    points: []",
+            "- travel:\n    points:\n      - 'invalid'",
+            "- travel:\n    points:\n      - '0, 0'\n    speed: 0",
+            "- assertScreenshot",
+            "- assertScreenshot:\n    path: a.png\n    thresholdPercentage: 101",
+            "- assertScreenshot:\n    path: a.png\n    extra: 1",
         ],
     )
     def test_invalid_commands_rejected(self, write_flow, yaml_cmd):
         with pytest.raises(FlowError):
             compile_text(write_flow, f"appId: a.b\n---\n{yaml_cmd}\n")
-
-    def test_travel_is_still_reported_as_unsupported(self, write_flow):
-        with pytest.raises(FlowError, match="does not support yet"):
-            compile_text(write_flow, "appId: a.b\n---\n- travel:\n    points: []\n")
 
 
 class TestDeviceAndThemeCommands:

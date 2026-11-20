@@ -120,10 +120,12 @@ def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
     return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", crc)
 
 
-def crop_png(data: bytes, bounds: tuple[int, int, int, int]) -> bytes:
-    """Crop an 8-bit non-interlaced PNG to ``(x1, y1, x2, y2)`` using stdlib."""
+def _decode_png(
+    data: bytes,
+) -> tuple[int, int, int, int, list[tuple[bytes, bytes]], list[bytes]]:
+    """Decode an 8-bit non-interlaced PNG into metadata and unfiltered rows."""
     if not data.startswith(_PNG_SIGNATURE):
-        raise AndroidError("Cannot crop screenshot: data is not a valid PNG.")
+        raise AndroidError("Invalid PNG data.")
     pos = len(_PNG_SIGNATURE)
     ihdr: tuple[int, int, int, int, int, int, int] | None = None
     idat_parts: list[bytes] = []
@@ -142,27 +144,20 @@ def crop_png(data: bytes, bounds: tuple[int, int, int, int]) -> bytes:
         elif ctype == b"IEND":
             break
     if ihdr is None or not idat_parts:
-        raise AndroidError("Cannot crop screenshot: missing IHDR or IDAT chunk.")
+        raise AndroidError("Invalid PNG: missing IHDR or IDAT chunk.")
     width, height, bit_depth, color_type, comp, flt, interlace = ihdr
     samples = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color_type)
     if bit_depth != 8 or comp != 0 or flt != 0 or interlace != 0 or samples is None:
         raise AndroidError(
-            f"Cannot crop PNG with bit_depth={bit_depth}, "
-            f"color_type={color_type}, interlace={interlace}."
+            f"Unsupported PNG format (bit_depth={bit_depth}, "
+            f"color_type={color_type}, interlace={interlace})."
         )
-    x1, y1, x2, y2 = bounds
-    x1 = max(0, min(int(x1), width - 1))
-    y1 = max(0, min(int(y1), height - 1))
-    x2 = max(x1 + 1, min(int(x2), width))
-    y2 = max(y1 + 1, min(int(y2), height))
-    new_w, new_h = x2 - x1, y2 - y1
-
     raw = zlib.decompress(b"".join(idat_parts))
     stride = width * samples
     prev = bytearray(stride)
-    out = bytearray()
+    rows: list[bytes] = []
     row_start = 0
-    for y in range(y2):
+    for _ in range(height):
         ftype = raw[row_start]
         src = raw[row_start + 1 : row_start + 1 + stride]
         row_start += 1 + stride
@@ -184,10 +179,25 @@ def crop_png(data: bytes, bounds: tuple[int, int, int, int]) -> bytes:
                 curr[i] = (curr[i] + _paeth(a, prev[i], c)) & 0xFF
         elif ftype != 0:
             raise AndroidError(f"Unsupported PNG scanline filter: {ftype}")
-        if y >= y1:
-            out.append(0)
-            out.extend(curr[x1 * samples : x2 * samples])
+        rows.append(bytes(curr))
         prev = curr
+    return width, height, color_type, samples, extra_chunks, rows
+
+
+def crop_png(data: bytes, bounds: tuple[int, int, int, int]) -> bytes:
+    """Crop an 8-bit non-interlaced PNG to ``(x1, y1, x2, y2)`` using stdlib."""
+    width, height, color_type, samples, extra_chunks, rows = _decode_png(data)
+    x1, y1, x2, y2 = bounds
+    x1 = max(0, min(int(x1), width - 1))
+    y1 = max(0, min(int(y1), height - 1))
+    x2 = max(x1 + 1, min(int(x2), width))
+    y2 = max(y1 + 1, min(int(y2), height))
+    new_w, new_h = x2 - x1, y2 - y1
+
+    out = bytearray()
+    for row in rows[y1:y2]:
+        out.append(0)
+        out.extend(row[x1 * samples : x2 * samples])
 
     new_ihdr = struct.pack(">IIBBBBB", new_w, new_h, 8, color_type, 0, 0, 0)
     parts = [_PNG_SIGNATURE, _png_chunk(b"IHDR", new_ihdr)]
@@ -196,6 +206,29 @@ def crop_png(data: bytes, bounds: tuple[int, int, int, int]) -> bytes:
     parts.append(_png_chunk(b"IDAT", zlib.compress(bytes(out))))
     parts.append(_png_chunk(b"IEND", b""))
     return b"".join(parts)
+
+
+def compare_png(actual: bytes, expected: bytes) -> float:
+    """Return the percentage (0..100) of pixels that match between two PNGs."""
+    w1, h1, _, s1, _, rows1 = _decode_png(actual)
+    w2, h2, _, s2, _, rows2 = _decode_png(expected)
+    if (w1, h1, s1) != (w2, h2, s2):
+        raise AndroidError(
+            f"Screenshot dimensions differ: expected {w2}x{h2} ({s2}ch), "
+            f"got {w1}x{h1} ({s1}ch)."
+        )
+    matched = 0
+    row_bytes = w1 * s1
+    for r1, r2 in zip(rows1, rows2, strict=True):
+        if r1 == r2:
+            matched += w1
+        else:
+            matched += sum(
+                1
+                for off in range(0, row_bytes, s1)
+                if r1[off : off + s1] == r2[off : off + s1]
+            )
+    return (matched / (w1 * h1)) * 100.0
 
 
 class AndroidDriver:

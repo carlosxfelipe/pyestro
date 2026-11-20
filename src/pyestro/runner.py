@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 import os
 import random
 import string
+import tempfile
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -11,7 +13,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from .android import SCREENRECORD_MAX_SECONDS, AndroidDriver, AndroidError, crop_png
+from .android import (
+    SCREENRECORD_MAX_SECONDS,
+    AndroidDriver,
+    AndroidError,
+    compare_png,
+    crop_png,
+)
 from .flow import (
     COPIED_TEXT_TOKEN,
     Command,
@@ -175,6 +183,8 @@ class FlowRunner:
             "setLocation": lambda c: self.driver.set_location(
                 c.spec["latitude"], c.spec["longitude"]
             ),
+            "travel": self._travel,
+            "assertScreenshot": self._assert_screenshot,
             "repeat": self._repeat,
             "retry": self._retry,
             "runFlow": self._run_flow,
@@ -496,6 +506,77 @@ class FlowRunner:
     def _assert_light_mode(self, _command: Command) -> None:
         if self.driver.is_dark_mode():
             raise FlowError("Expected device to be in light mode.")
+
+    def _travel(self, command: Command) -> None:
+        points: list[tuple[float, float]] = command.spec["points"]
+        speed: float = command.spec["speed"]
+        deadline = time.monotonic() + command.spec["timeout"]
+        self.driver.set_location(*points[0])
+        for (lat1, lon1), (lat2, lon2) in zip(points, points[1:], strict=False):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            d_lat = math.radians(lat2 - lat1)
+            d_lon = math.radians(lon2 - lon1)
+            a = (
+                math.sin(d_lat / 2) ** 2
+                + math.cos(math.radians(lat1))
+                * math.cos(math.radians(lat2))
+                * math.sin(d_lon / 2) ** 2
+            )
+            distance_km = 2 * 6371.0 * math.asin(min(1.0, math.sqrt(a)))
+            duration = min(remaining, (distance_km / speed) * 3600.0)
+            steps = max(1, min(20, int(duration / 0.25)))
+            sleep_s = duration / steps if steps and duration > 0 else 0.0
+            for step in range(1, steps + 1):
+                if time.monotonic() >= deadline:
+                    break
+                frac = step / steps
+                self.driver.set_location(
+                    lat1 + (lat2 - lat1) * frac,
+                    lon1 + (lon2 - lon1) * frac,
+                )
+                if sleep_s > 0:
+                    time.sleep(min(sleep_s, max(0.0, deadline - time.monotonic())))
+        self.driver.set_location(*points[-1])
+
+    def _assert_screenshot(self, command: Command) -> None:
+        spec = command.spec
+        ref = Path(spec["path"])
+        if not ref.is_absolute():
+            ref = self._base_dir / ref
+        if not ref.is_file() and ref.suffix == "":
+            png_ref = ref.with_suffix(".png")
+            if png_ref.is_file():
+                ref = png_ref
+        if not ref.is_file():
+            raise FlowError(f"assertScreenshot: reference file not found: {ref}")
+
+        crop_sel: Selector | None = spec.get("cropOn")
+        crop_element: UiElement | None = None
+        if crop_sel is not None:
+            crop_element = self._find(crop_sel, self.default_timeout)
+            if crop_element is None:
+                raise FlowError(
+                    f"assertScreenshot: cropOn element not found: {crop_sel.describe()}"
+                )
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            self.driver.screenshot(tmp_path)
+            actual = tmp_path.read_bytes()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        if crop_element is not None:
+            actual = crop_png(actual, crop_element.bounds)
+        match_pct = compare_png(actual, ref.read_bytes())
+        threshold: float = spec["thresholdPercentage"]
+        if match_pct < threshold:
+            raise FlowError(
+                f"assertScreenshot: {match_pct:.2f}% match is below "
+                f"{threshold:g}% ({ref.name})."
+            )
 
     def _clear_keychain(self, _command: Command) -> None:
         self.echo("       clearKeychain is iOS-specific; ignored on Android.")
