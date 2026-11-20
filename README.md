@@ -63,30 +63,30 @@ pyestro devices
 ### Validate flows (no device required)
 
 ```bash
-pyestro validate flows/
+pyestro validate flows/en/ flows/pt-br/
 ```
 
 ### Run flows
 
 ```bash
-# Single flow or an entire directory (.yaml / .yml)
-pyestro test flows/settings_search.yaml
-pyestro test flows/
+# Single flow or an entire language folder (.yaml / .yml)
+pyestro test flows/en/settings_search.yaml
+pyestro test flows/pt-br/
 
 # Target a specific device/emulator
-pyestro --serial emulator-5554 test flows/
+pyestro --serial emulator-5554 test flows/en/
 
 # Pass environment variables
-pyestro test flows/ -e USER=ana -e PASS=123
+pyestro test flows/en/ -e USER=ana -e PASS=123
 
 # Filter by tags
-pyestro test flows/ --include-tags smoke --exclude-tags wip
+pyestro test flows/en/ --include-tags smoke --exclude-tags wip
 
 # Stop on first failure & disable Android animations during the run
-pyestro test flows/ --fail-fast --disable-animations
+pyestro test flows/en/ --fail-fast --disable-animations
 
 # Record video and generate HTML + JUnit XML reports in artifacts/
-pyestro test flows/settings_search.yaml --record --report
+pyestro test flows/en/settings_search.yaml --record --report
 ```
 
 ### Common CLI options
@@ -154,7 +154,7 @@ Pyestro generates visual artifacts, screen recordings, and test reports in `arti
 
 - **Full-flow recording via CLI:** records the entire flow run via `adb shell screenrecord` and saves `artifacts/<flow>.mp4`:
   ```bash
-  pyestro test flows/settings_search.yaml --record
+  pyestro test flows/en/settings_search.yaml --record
   ```
 - **In-flow Maestro commands (`startRecording` / `stopRecording`):** record specific parts of a flow (relative paths are saved under `artifacts/` as `.mp4`):
   ```yaml
@@ -173,13 +173,13 @@ Pyestro generates visual artifacts, screen recordings, and test reports in `arti
 Generate both an interactive, self-contained HTML report (`artifacts/report.html`) and a JUnit XML report (`artifacts/report.xml`):
 
 ```bash
-pyestro test flows/ --report
+pyestro test flows/en/ --report
 ```
 
 Or specify custom output paths:
 
 ```bash
-pyestro test flows/ --report-junit test-results/junit.xml --report-html artifacts/index.html
+pyestro test flows/en/ --report-junit test-results/junit.xml --report-html artifacts/index.html
 ```
 
 - **JUnit XML (`--report-junit`):** Standard format for CI/CD integration (GitHub Actions, GitLab CI, etc.).

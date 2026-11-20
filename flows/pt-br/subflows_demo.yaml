@@ -1,0 +1,27 @@
+# Demonstra repeat, runFlow condicional e retry (emulador em português do Brasil).
+appId: com.android.settings
+tags:
+  - demo
+---
+- stopApp: com.google.android.settings.intelligence
+- launchApp:
+    clearState: false
+    permissions:
+      all: allow
+- runFlow:
+    when:
+      visible: "Pular"
+    commands:
+      - tapOn: "Pular"
+- repeat:
+    times: 1
+    commands:
+      - scroll
+- retry:
+    maxRetries: 2
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: "Sobre.*"
+          timeout: 15000
+- assertVisible: "Sobre.*"

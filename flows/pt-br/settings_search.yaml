@@ -1,0 +1,25 @@
+# Busca nas Configurações do Android (emulador em português do Brasil).
+#   uv run pyestro test flows/pt-br/settings_search.yaml
+appId: com.android.settings
+name: Busca nas configurações
+tags:
+  - smoke
+env:
+  QUERY: tela
+---
+- stopApp: com.google.android.settings.intelligence
+- launchApp
+- tapOn: "Pesquise configurações"
+- waitForAnimationToEnd
+- inputText: ${QUERY}
+- extendedWaitUntil:
+    visible: "Tela.*"
+    timeout: 5000
+- tapOn:
+    text: "Tela e toque"
+    index: 1
+- assertVisible: ".*Brilho.*"
+- takeScreenshot: settings_display_pt_br
+- back
+- stopApp: com.google.android.settings.intelligence
+- stopApp
