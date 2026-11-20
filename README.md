@@ -44,6 +44,9 @@ To contribute to the Pyestro engine or run the library's unit tests:
 ```bash
 git clone https://github.com/carlosxfelipe/pyestro.git
 cd pyestro
+```
+
+```bash
 uv sync
 ```
 
@@ -192,4 +195,4 @@ uv run pyestro --help
 
 ## License
 
-[GPL-3.0-or-later](LICENSE)
+This project is licensed under the GNU General Public License v3.0 or later ([GPL-3.0-or-later](LICENSE)).

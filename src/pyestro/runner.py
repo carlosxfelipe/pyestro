@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .android import SCREENRECORD_MAX_SECONDS, AndroidDriver, AndroidError
+from .android import SCREENRECORD_MAX_SECONDS, AndroidDriver, AndroidError, crop_png
 from .flow import (
     Command,
     FlowConfig,
@@ -31,6 +31,8 @@ from .selectors import (
 
 # Maestro waits up to ~7s for an element before failing.
 DEFAULT_TIMEOUT = 7.0
+# Guard against runFlow files that include each other.
+MAX_SUBFLOW_DEPTH = 20
 
 _FALSY = {"", "false", "0", "undefined", "null", "nan"}
 
@@ -42,6 +44,7 @@ class StepResult:
     passed: bool
     error: str | None = None
     duration: float = 0.0
+    hook: bool = False  # onFlowStart/onFlowComplete failure (not a flow command)
 
 
 @dataclass
@@ -71,8 +74,13 @@ class FlowResult:
         return len(self.steps) - self.passed
 
     @property
+    def executed(self) -> int:
+        """Flow commands that ran (hook failures are not counted)."""
+        return sum(not step.hook for step in self.steps)
+
+    @property
     def skipped(self) -> int:
-        return self.total - len(self.steps)
+        return max(0, self.total - self.executed)
 
     @property
     def ok(self) -> bool:
@@ -111,6 +119,8 @@ class FlowRunner:
         self.transliterate = transliterate
         self.echo = echo
         self._app_id: str | None = None
+        self._flow_depth = 0
+        self._launch_count = 0
         self._env: dict[str, str] = {}
         self._base_dir: Path = Path.cwd()
         self._current_result: FlowResult | None = None
@@ -253,7 +263,7 @@ class FlowRunner:
             self._run_commands(commands)
         except (FlowError, AndroidError, ValueError) as exc:
             result.steps.append(
-                StepResult(len(result.steps) + 1, name, False, str(exc))
+                StepResult(len(result.steps) + 1, name, False, str(exc), hook=True)
             )
             self.echo(f"  FAIL {name}: {exc}")
             self._capture_failure(flow_path, len(result.steps))
@@ -270,7 +280,7 @@ class FlowRunner:
             raise FlowError(f"Command without implementation: {command.name}")
         try:
             handler(command)
-        except FlowError as exc:
+        except (FlowError, AndroidError) as exc:
             if command.optional:
                 self.echo(f"       (optional) {command.name} ignored: {exc}")
                 return
@@ -363,12 +373,17 @@ class FlowRunner:
         spec = command.spec
         package = self._target_app(command)
         self._app_id = package
+        self._launch_count += 1
         if spec["clearState"]:
             self.driver.clear_app(package)
         if spec["stopApp"]:
             self.driver.stop_app(package)
         self._apply_permissions(package, spec["permissions"])
-        self.driver.launch_app(package)
+        args = spec.get("arguments")
+        if args:
+            self.driver.launch_app(package, arguments=args)
+        else:
+            self.driver.launch_app(package)
 
     def _apply_permissions(self, package: str, permissions: dict[str, str]) -> None:
         # `all` first; later specific rules may override it.
@@ -515,13 +530,27 @@ class FlowRunner:
         ex, ey = self._resolve_point(spec["end"])
         self.driver.swipe(sx, sy, ex, ey, duration_ms)
 
+    def _center_element(self, element: UiElement) -> None:
+        w, h = self._screen()
+        target_y = h // 2
+        delta = element.center[1] - target_y
+        if abs(delta) <= max(10, int(h * 0.05)):
+            return
+        max_half = int(h * 0.4)
+        half = max(-max_half, min(max_half, delta // 2))
+        if half != 0:
+            self.driver.swipe(w // 2, target_y + half, w // 2, target_y - half, 300)
+
     def _scroll_until_visible(self, command: Command) -> None:
         spec = command.spec
         sel: Selector = spec["selector"]
         deadline = time.monotonic() + spec["timeout"]
         while True:
             try:
-                if self._find_now(sel) is not None:
+                element = self._find_now(sel)
+                if element is not None:
+                    if spec.get("centerElement"):
+                        self._center_element(element)
                     return
             except AndroidError:
                 pass  # unstable screen while scrolling: try again
@@ -535,7 +564,10 @@ class FlowRunner:
         )
 
     def _open_link(self, command: Command) -> None:
-        self.driver.open_link(command.spec["link"])
+        if command.spec.get("browser"):
+            self.driver.open_link(command.spec["link"], browser=True)
+        else:
+            self.driver.open_link(command.spec["link"])
 
     def _assert_visible(self, command: Command) -> None:
         sel: Selector = command.spec["selector"]
@@ -584,7 +616,17 @@ class FlowRunner:
 
     def _take_screenshot(self, command: Command) -> None:
         path = self._artifact_path(command.spec["path"], ".png")
+        crop_sel: Selector | None = command.spec.get("cropOn")
+        crop_element: UiElement | None = None
+        if crop_sel is not None:
+            crop_element = self._find(crop_sel, self.default_timeout)
+            if crop_element is None:
+                raise FlowError(
+                    f"takeScreenshot: cropOn element not found: {crop_sel.describe()}"
+                )
         self.driver.screenshot(path)
+        if crop_element is not None and path.is_file():
+            path.write_bytes(crop_png(path.read_bytes(), crop_element.bounds))
         if (
             self._current_result is not None
             and path not in self._current_result.artifacts
@@ -694,6 +736,11 @@ class FlowRunner:
             self._run_commands(command.nested)
 
     def _run_file(self, file: str, extra_env: dict[str, str]) -> None:
+        if self._flow_depth >= MAX_SUBFLOW_DEPTH:
+            raise FlowError(
+                f"runFlow: nesting deeper than {MAX_SUBFLOW_DEPTH} levels "
+                f"(possible cycle while running '{file}')."
+            )
         path = Path(file)
         if not path.is_absolute():
             path = self._base_dir / path
@@ -702,9 +749,16 @@ class FlowRunner:
         env = {**config.env, **self._env, **extra_env}
         commands = compile_commands(raw, env, f"{path.name} › ")
         saved_env, saved_dir, saved_app = self._env, self._base_dir, self._app_id
+        initial_app = saved_app or config.app_id
         self._env, self._base_dir = env, path.resolve().parent
-        self._app_id = saved_app or config.app_id
+        self._app_id = initial_app
+        self._flow_depth += 1
+        launches_before = self._launch_count
         try:
             self._run_commands(commands)
         finally:
-            self._env, self._base_dir, self._app_id = saved_env, saved_dir, saved_app
+            self._flow_depth -= 1
+            self._env, self._base_dir = saved_env, saved_dir
+            # Keep the appId when a launchApp ran inside the subflow.
+            if self._launch_count == launches_before:
+                self._app_id = saved_app

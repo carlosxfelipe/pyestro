@@ -22,7 +22,7 @@ Use `pyestro validate flows/` to check the syntax without a device.
 | Timings | Always in **milliseconds** (`timeout: 5000`). Units such as `5s` are refused. |
 | `swipe: direction: UP` | The finger moves up (the content moves down). |
 | `scroll` / `scrollUntilVisible: DOWN` | Scrolls the content down. |
-| `launchApp` | `stopApp: true` and `permissions: {all: allow}` by default; `clearState`, per-group `permissions` (`notifications`, `location`, `camera`...). |
+| `launchApp` | `stopApp: true` and `permissions: {all: allow}` by default; `clearState`, per-group `permissions` (`notifications`, `location`, `camera`...), and `arguments` (passed as Android Intent extras via `am start`). |
 | `${VAR}` | Variables from the `env` header, from `-e` and from `MAESTRO_*` in the shell (the CLI wins over the header). Supports `${VAR}`, `${VAR \|\| 'default'}` and `${VAR ?? 'default'}`; other JS expressions are refused. |
 | `runFlow` | Path relative to the current file; the command's `env` applies to the subflow; `when` accepts `visible`, `notVisible`, `platform`, `true`. |
 | Header | `appId`, `name`, `tags`, `env`, `onFlowStart`, `onFlowComplete`; other Maestro keys are accepted and ignored. |
@@ -39,6 +39,9 @@ Recognized but **not yet supported** (explicit error): `assertTrue`, `evalScript
 - Screen reading uses `uiautomator dump`, which is slower and less faithful than Maestro's driver; `waitToSettleTimeoutMs`, `speed` and `visibilityPercentage` are validated but ignored.
 - `inputText` only types ASCII via ADB; use `--transliterate` to strip accents.
 - `retryTapIfNoChange` defaults to `false`.
+- Accepted without effect on Android via ADB: `launchApp: clearKeychain` (iOS-only) and `openLink: autoVerify`.
+- `optional: true` skips both assertion failures and ADB command errors for that step.
+- `runFlow` nesting is capped at 20 levels to fail cleanly on circular subflows.
 
 ## How to keep compatibility
 

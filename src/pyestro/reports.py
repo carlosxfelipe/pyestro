@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import html
+import os
 import xml.etree.ElementTree as ET
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 from .runner import FlowResult
+
+
+def _relative_to_report(asset: Path, report: Path) -> str:
+    """Link to ``asset`` relative to the report's folder (POSIX separators)."""
+    try:
+        rel = os.path.relpath(asset.resolve(), report.resolve().parent)
+    except ValueError:  # e.g. different drives on Windows
+        return asset.resolve().as_uri()
+    return Path(rel).as_posix()
 
 
 def generate_junit_xml(
@@ -17,7 +27,7 @@ def generate_junit_xml(
     dest.parent.mkdir(parents=True, exist_ok=True)
     flow_list = [results] if isinstance(results, FlowResult) else list(results)
 
-    total_tests = sum(f.total for f in flow_list)
+    total_tests = sum(len(f.steps) + f.skipped for f in flow_list)
     total_failures = sum(f.failed for f in flow_list)
     total_time = sum(f.duration for f in flow_list)
 
@@ -35,7 +45,7 @@ def generate_junit_xml(
             root,
             "testsuite",
             name=flow.path.stem,
-            tests=str(flow.total),
+            tests=str(len(flow.steps) + flow.skipped),
             failures=str(flow.failed),
             errors="0",
             skipped=str(flow.skipped),
@@ -58,7 +68,7 @@ def generate_junit_xml(
                 )
                 fail_elem.text = step.error or "Step failed"
 
-        for skipped_idx in range(len(flow.steps) + 1, flow.total + 1):
+        for skipped_idx in range(flow.executed + 1, flow.executed + flow.skipped + 1):
             case = ET.SubElement(
                 suite,
                 "testcase",
@@ -81,7 +91,7 @@ def generate_html_report(
     dest.parent.mkdir(parents=True, exist_ok=True)
     flow_list = [results] if isinstance(results, FlowResult) else list(results)
 
-    total_steps = sum(f.total for f in flow_list)
+    total_steps = sum(len(f.steps) + f.skipped for f in flow_list)
     total_passed = sum(f.passed for f in flow_list)
     total_failed = sum(f.failed for f in flow_list)
     total_skipped = sum(f.skipped for f in flow_list)
@@ -111,10 +121,7 @@ def generate_html_report(
 
         video_blocks = []
         for video in videos:
-            try:
-                rel_video = video.relative_to(dest.parent)
-            except ValueError:
-                rel_video = video
+            rel_video = _relative_to_report(video, dest)
             title = (
                 "Execution Recording"
                 if len(videos) == 1
@@ -159,7 +166,7 @@ def generate_html_report(
                 """
             steps_rows.append(row)
 
-        for skipped_idx in range(len(flow.steps) + 1, flow.total + 1):
+        for skipped_idx in range(flow.executed + 1, flow.executed + flow.skipped + 1):
             row = f"""
             <tr class="step-row step-skipped">
                 <td class="col-idx">#{skipped_idx:02d}</td>
@@ -178,10 +185,7 @@ def generate_html_report(
         if screenshots:
             gallery_items = []
             for img in screenshots:
-                try:
-                    rel_img = img.relative_to(dest.parent)
-                except ValueError:
-                    rel_img = img
+                rel_img = _relative_to_report(img, dest)
                 gallery_items.append(f"""
                 <div class="gallery-card">
                     <a href="{html.escape(str(rel_img))}" target="_blank">
@@ -206,7 +210,8 @@ def generate_html_report(
                 <div>
                     <h3 class="flow-title">{html.escape(str(flow.path))}</h3>
                     <div class="flow-meta">
-                        {flow.total} steps &bull; {flow.duration:.2f}s
+                        {len(flow.steps) + flow.skipped} steps &bull;
+                        {flow.duration:.2f}s
                     </div>
                 </div>
                 <div>{flow_status_badge}</div>

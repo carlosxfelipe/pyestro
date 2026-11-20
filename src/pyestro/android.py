@@ -4,11 +4,13 @@ import contextlib
 import re
 import shlex
 import signal
+import struct
 import subprocess
 import time
 import unicodedata
 import uuid
 import xml.etree.ElementTree as ET
+import zlib
 from collections.abc import Generator, Sequence
 from pathlib import Path
 
@@ -105,6 +107,97 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace").strip()
 
 
+def _paeth(a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    if pa <= pb and pa <= pc:
+        return a
+    return b if pb <= pc else c
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(chunk_type + data) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", crc)
+
+
+def crop_png(data: bytes, bounds: tuple[int, int, int, int]) -> bytes:
+    """Crop an 8-bit non-interlaced PNG to ``(x1, y1, x2, y2)`` using stdlib."""
+    if not data.startswith(_PNG_SIGNATURE):
+        raise AndroidError("Cannot crop screenshot: data is not a valid PNG.")
+    pos = len(_PNG_SIGNATURE)
+    ihdr: tuple[int, int, int, int, int, int, int] | None = None
+    idat_parts: list[bytes] = []
+    extra_chunks: list[tuple[bytes, bytes]] = []
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos : pos + 4])[0]
+        ctype = data[pos + 4 : pos + 8]
+        cdata = data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            ihdr = struct.unpack(">IIBBBBB", cdata)
+        elif ctype == b"IDAT":
+            idat_parts.append(cdata)
+        elif ctype in (b"PLTE", b"tRNS"):
+            extra_chunks.append((ctype, cdata))
+        elif ctype == b"IEND":
+            break
+    if ihdr is None or not idat_parts:
+        raise AndroidError("Cannot crop screenshot: missing IHDR or IDAT chunk.")
+    width, height, bit_depth, color_type, comp, flt, interlace = ihdr
+    samples = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(color_type)
+    if bit_depth != 8 or comp != 0 or flt != 0 or interlace != 0 or samples is None:
+        raise AndroidError(
+            f"Cannot crop PNG with bit_depth={bit_depth}, "
+            f"color_type={color_type}, interlace={interlace}."
+        )
+    x1, y1, x2, y2 = bounds
+    x1 = max(0, min(int(x1), width - 1))
+    y1 = max(0, min(int(y1), height - 1))
+    x2 = max(x1 + 1, min(int(x2), width))
+    y2 = max(y1 + 1, min(int(y2), height))
+    new_w, new_h = x2 - x1, y2 - y1
+
+    raw = zlib.decompress(b"".join(idat_parts))
+    stride = width * samples
+    prev = bytearray(stride)
+    out = bytearray()
+    row_start = 0
+    for y in range(y2):
+        ftype = raw[row_start]
+        src = raw[row_start + 1 : row_start + 1 + stride]
+        row_start += 1 + stride
+        curr = bytearray(src)
+        if ftype == 1:  # Sub
+            for i in range(samples, stride):
+                curr[i] = (curr[i] + curr[i - samples]) & 0xFF
+        elif ftype == 2:  # Up
+            for i in range(stride):
+                curr[i] = (curr[i] + prev[i]) & 0xFF
+        elif ftype == 3:  # Average
+            for i in range(stride):
+                left = curr[i - samples] if i >= samples else 0
+                curr[i] = (curr[i] + ((left + prev[i]) >> 1)) & 0xFF
+        elif ftype == 4:  # Paeth
+            for i in range(stride):
+                a = curr[i - samples] if i >= samples else 0
+                c = prev[i - samples] if i >= samples else 0
+                curr[i] = (curr[i] + _paeth(a, prev[i], c)) & 0xFF
+        elif ftype != 0:
+            raise AndroidError(f"Unsupported PNG scanline filter: {ftype}")
+        if y >= y1:
+            out.append(0)
+            out.extend(curr[x1 * samples : x2 * samples])
+        prev = curr
+
+    new_ihdr = struct.pack(">IIBBBBB", new_w, new_h, 8, color_type, 0, 0, 0)
+    parts = [_PNG_SIGNATURE, _png_chunk(b"IHDR", new_ihdr)]
+    for ctype, cdata in extra_chunks:
+        parts.append(_png_chunk(ctype, cdata))
+    parts.append(_png_chunk(b"IDAT", zlib.compress(bytes(out))))
+    parts.append(_png_chunk(b"IEND", b""))
+    return b"".join(parts)
+
+
 class AndroidDriver:
     def __init__(self, serial: str | None = None, adb_path: str = "adb") -> None:
         self.serial = serial
@@ -162,8 +255,42 @@ class AndroidDriver:
                 "appId must be the Android package name, e.g. com.example.app"
             )
 
-    def launch_app(self, app_id: str) -> None:
+    def _resolve_component(self, *args: str, error_context: str) -> str:
+        output = self.shell(
+            "cmd", "package", "resolve-activity", "--brief", *args, timeout=15
+        )
+        for line in reversed(output.splitlines()):
+            candidate = line.strip()
+            if "/" in candidate and " " not in candidate:
+                return candidate
+        raise AndroidError(f"Could not resolve activity ({error_context}): {output}")
+
+    def launch_app(
+        self,
+        app_id: str,
+        arguments: dict[str, str | int | float | bool] | None = None,
+    ) -> None:
         self._check_app_id(app_id)
+        if arguments:
+            component = self._resolve_component(
+                "-c",
+                "android.intent.category.LAUNCHER",
+                app_id,
+                error_context=app_id,
+            )
+            extra_args: list[str] = []
+            for key, val in arguments.items():
+                qkey = shlex.quote(str(key))
+                if isinstance(val, bool):
+                    extra_args.extend(["--ez", qkey, "true" if val else "false"])
+                elif isinstance(val, int):
+                    extra_args.extend(["--ei", qkey, str(val)])
+                elif isinstance(val, float):
+                    extra_args.extend(["--ef", qkey, str(val)])
+                else:
+                    extra_args.extend(["--es", qkey, shlex.quote(str(val))])
+            self.shell("am", "start", "-n", component, *extra_args, timeout=30)
+            return
         self.shell(
             "monkey",
             "-p",
@@ -330,9 +457,30 @@ class AndroidDriver:
         else:
             raise ValueError(f"Unknown scroll direction: {direction}")
 
-    def open_link(self, url: str) -> None:
+    def open_link(self, url: str, *, browser: bool = False) -> None:
         if not url:
             raise ValueError("URL cannot be empty.")
+        if browser:
+            component = self._resolve_component(
+                "-a",
+                "android.intent.action.VIEW",
+                "-c",
+                "android.intent.category.BROWSABLE",
+                "-d",
+                "http://",
+                error_context="default browser",
+            )
+            self.shell(
+                "am",
+                "start",
+                "-n",
+                component,
+                "-a",
+                "android.intent.action.VIEW",
+                "-d",
+                shlex.quote(str(url)),
+            )
+            return
         self.shell(
             "am",
             "start",
@@ -494,6 +642,9 @@ class AndroidDriver:
             self.shell("rm", "-f", remote_path)
             return path if path.is_file() and path.stat().st_size > 0 else None
         except Exception:
+            # Best effort: do not leave the video behind on the device.
+            with contextlib.suppress(Exception):
+                self.shell("rm", "-f", remote_path)
             return None
 
     @contextlib.contextmanager

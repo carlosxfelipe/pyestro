@@ -50,6 +50,9 @@ def _eval_expression(expr: str, env: dict[str, str]) -> str:
     Supports ``${VAR}``, ``${'text'}``, ``${VAR || 'default'}``, and
     ``${VAR ?? 'default'}``. Any other expression requires Maestro's JS engine.
     """
+    literal = _literal(expr)
+    if literal is not None:
+        return literal
     for op in ("||", "??"):
         if op in expr:
             left, right = (part.strip() for part in expr.split(op, 1))
@@ -289,6 +292,7 @@ def _p_launch_app(cmd: str, value: Any) -> Parsed:
         "clearState": False,
         "stopApp": True,
         "permissions": {"all": "allow"},
+        "arguments": {},
     }
     label = None
     if isinstance(value, str):
@@ -307,6 +311,18 @@ def _p_launch_app(cmd: str, value: Any) -> Parsed:
                 "label",
             },
         )
+        if "arguments" in value:
+            args = value["arguments"]
+            if not isinstance(args, dict):
+                raise FlowError(f"{cmd}: arguments must be a key-value map.")
+            parsed_args: dict[str, str | int | float | bool] = {}
+            for k, v in args.items():
+                if not isinstance(v, (str, int, float, bool)):
+                    raise FlowError(
+                        f"{cmd}: arguments.{k} must be text, number, or boolean."
+                    )
+                parsed_args[str(k)] = v
+            spec["arguments"] = parsed_args
         if "appId" in value:
             spec["appId"] = _text(cmd, "appId", value["appId"])
         for key in ("clearState", "stopApp"):
@@ -517,10 +533,19 @@ def _p_open_link(cmd: str, value: Any) -> Parsed:
         _check_keys(cmd, value, {"link", "autoVerify", "browser", "label"})
         if "link" not in value:
             raise FlowError(f"{cmd}: provide 'link'.")
-        return {"link": _text(cmd, "link", value["link"])}, _label(cmd, value), False
+        if "autoVerify" in value:
+            _bool(cmd, "autoVerify", value["autoVerify"])
+        browser = (
+            _bool(cmd, "browser", value["browser"]) if "browser" in value else False
+        )
+        return (
+            {"link": _text(cmd, "link", value["link"]), "browser": browser},
+            _label(cmd, value),
+            False,
+        )
     if not isinstance(value, str) or not value.strip():
         raise FlowError(f"{cmd}: provide the URL as text.")
-    return {"link": value}, None, False
+    return {"link": value, "browser": False}, None, False
 
 
 def _p_extended_wait(cmd: str, value: Any) -> Parsed:
@@ -548,10 +573,15 @@ def _p_screenshot(cmd: str, value: Any) -> Parsed:
         _check_keys(cmd, value, {"path", "label", "cropOn"})
         if "path" not in value:
             raise FlowError(f"{cmd}: provide 'path'.")
-        return {"path": _text(cmd, "path", value["path"])}, _label(cmd, value), False
+        crop_on = _selector(cmd, value["cropOn"]) if "cropOn" in value else None
+        return (
+            {"path": _text(cmd, "path", value["path"]), "cropOn": crop_on},
+            _label(cmd, value),
+            False,
+        )
     if not isinstance(value, str) or not value.strip():
         raise FlowError(f"{cmd}: provide the filename.")
-    return {"path": value}, None, False
+    return {"path": value, "cropOn": None}, None, False
 
 
 def _p_start_recording(cmd: str, value: Any) -> Parsed:
