@@ -1,0 +1,26 @@
+# Demonstrates repeat, conditional runFlow and retry.
+appId: com.android.settings
+tags:
+  - demo
+---
+- launchApp:
+    clearState: false
+    permissions:
+      all: allow
+- runFlow:
+    when:
+      visible: "Skip"
+    commands:
+      - tapOn: "Skip"
+- repeat:
+    times: 2
+    commands:
+      - scroll
+- retry:
+    maxRetries: 2
+    commands:
+      - scrollUntilVisible:
+          element:
+            text: "About.*"
+          timeout: 15000
+- assertVisible: "About.*"
