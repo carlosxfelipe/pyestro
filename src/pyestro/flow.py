@@ -100,6 +100,26 @@ def interpolate_string(text: str, env: dict[str, str]) -> str:
     return _EXPR_RE.sub(lambda m: _eval_expression(m.group(1), env), text)
 
 
+def load_env_file(path: str | Path = ".env") -> dict[str, str]:
+    """Load KEY=VALUE pairs from a ``.env`` file if it exists."""
+    env_vars: dict[str, str] = {}
+    env_path = Path(path)
+    if not env_path.is_file():
+        return env_vars
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        key = key.strip()
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        if key:
+            env_vars[key] = val
+    return env_vars
+
+
 def interpolate_data(
     data: Any, env: dict[str, str], skip_keys: frozenset[str] = frozenset()
 ) -> Any:

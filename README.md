@@ -103,6 +103,7 @@ pyestro test flows/settings_search.yaml --record --report
 | `--report` | Generate HTML and JUnit XML reports in `artifacts/` |
 | `--report-html` / `--report-junit` | Custom output paths for HTML or JUnit XML reports |
 | `--transliterate` | Strip accents in `inputText` (since ADB only types ASCII) |
+| `--no-screen-cache` | Disable the 1s hierarchy cache between consecutive assertions |
 
 ## Example flow
 
@@ -143,7 +144,7 @@ Inherited from AndroFlow (which also used plain ADB); these are not regressions:
 - **Screen reading via `uiautomator dump`:** slower and less faithful than Maestro's driver. Screens with continuous animations may fail with `"could not get idle state"`.
 - **`inputText` only accepts ASCII:** a limitation of `adb shell input text`. Use `--transliterate` to strip accents (`Cartão` → `Cartao`); emojis and other non-ASCII characters are not supported.
 
-Differences from AndroFlow: the screen cache was removed, so flows with many consecutive assertions may be slightly slower. The `transliterate` option is no longer a YAML key (Maestro does not recognize it) and became the `--transliterate` CLI flag.
+Differences from AndroFlow: the `transliterate` option is no longer a YAML key (Maestro does not recognize it) and became the `--transliterate` CLI flag. Consecutive read-only assertions share a 1-second hierarchy cache by default (invalidated on any action; disable with `--no-screen-cache`), and a `.env` file in the working directory is loaded automatically as fallback variables.
 
 ## Observability and CI/CD
 

@@ -271,6 +271,21 @@ class TestInterpolation:
         with pytest.raises(FlowError, match="not supported"):
             interpolate_string("${A.toUpperCase()}", {"A": "x"})
 
+    def test_load_env_file_parses_quotes_and_comments(self, tmp_path):
+        from pyestro.flow import load_env_file
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "# comment\n\nHOST=https://api.local\nPASS='s3cr3t'\nUSER=\"ana\"\n",
+            encoding="utf-8",
+        )
+        assert load_env_file(env_file) == {
+            "HOST": "https://api.local",
+            "PASS": "s3cr3t",
+            "USER": "ana",
+        }
+        assert load_env_file(tmp_path / "missing.env") == {}
+
 
 class TestClipboardAndLocation:
     def test_valid_commands(self, write_flow):

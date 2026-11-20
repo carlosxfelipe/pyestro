@@ -156,6 +156,13 @@ def test_flow(
             help="Strip accents in inputText (ADB only types ASCII).",
         ),
     ] = False,
+    no_screen_cache: Annotated[
+        bool,
+        typer.Option(
+            "--no-screen-cache",
+            help="Disable the 1s hierarchy cache between consecutive assertions.",
+        ),
+    ] = False,
 ) -> None:
     """Run one or more YAML test flows."""
     driver: AndroidDriver = ctx.obj["driver"]
@@ -182,6 +189,7 @@ def test_flow(
             include_tags=_split_tags(include_tags),
             exclude_tags=_split_tags(exclude_tags),
             transliterate=transliterate,
+            no_screen_cache=no_screen_cache,
         )
     finally:
         if saved_animations is not None:
@@ -253,6 +261,7 @@ def _run_suite(
     include_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
     transliterate: bool = False,
+    no_screen_cache: bool = False,
 ) -> None:
     if report:
         report_html = report_html or Path("artifacts/report.html")
@@ -271,7 +280,11 @@ def _run_suite(
         raise typer.Exit(1)
 
     runner = FlowRunner(
-        driver, env=cli_env, echo=typer.echo, transliterate=transliterate
+        driver,
+        env=cli_env,
+        echo=typer.echo,
+        transliterate=transliterate,
+        screen_cache_ttl=0.0 if no_screen_cache else 1.0,
     )
     results = []
     has_failure = False

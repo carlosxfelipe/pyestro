@@ -533,3 +533,49 @@ def test_assert_screenshot_passes_and_fails_by_threshold(write_flow, tmp_path):
     ).run(fail_flow)
     assert not res.ok
     assert "below 95%" in (res.steps[0].error or "")
+
+
+def test_screen_cache_reuses_dump_and_invalidates_on_action(write_flow, tmp_path):
+    class CountingDriver(FakeDriver):
+        def __init__(self, *screens):
+            super().__init__(*screens)
+            self.dumps = 0
+
+        def dump_hierarchy(self):
+            self.dumps += 1
+            return super().dump_hierarchy()
+
+    screen = hierarchy(
+        node("A", bounds="[0,0][10,10]"),
+        node("B", bounds="[0,20][10,30]"),
+    )
+    flow = write_flow(
+        "appId: a.b\n---\n- assertVisible: A\n- assertVisible: B\n"
+        "- back\n- assertVisible: A\n"
+    )
+
+    cached = CountingDriver(screen)
+    assert runner(cached, tmp_path).run(flow).ok
+    # First two assertions share 1 dump; `back` invalidates before the 3rd assertion.
+    assert cached.dumps == 2
+
+    uncached = CountingDriver(screen)
+    assert runner(uncached, tmp_path, screen_cache_ttl=0.0).run(flow).ok
+    assert uncached.dumps == 3
+
+
+def test_dotenv_file_loaded_with_cli_and_header_precedence(
+    write_flow, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("USER=from_dotenv\nTOKEN=abc\n", encoding="utf-8")
+    driver = FakeDriver()
+    flow = write_flow(
+        "appId: a.b\nenv:\n  USER: from_header\n---\n- inputText: ${USER}:${TOKEN}\n"
+    )
+    assert runner(driver, tmp_path).run(flow).ok
+    assert ("type_text", "from_header:abc") in driver.calls
+
+    driver2 = FakeDriver()
+    assert runner(driver2, tmp_path, env={"USER": "from_cli"}).run(flow).ok
+    assert ("type_text", "from_cli:abc") in driver2.calls

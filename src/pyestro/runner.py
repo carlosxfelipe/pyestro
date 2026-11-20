@@ -26,6 +26,7 @@ from .flow import (
     FlowConfig,
     FlowError,
     compile_commands,
+    load_env_file,
     parse_config,
     permission_names,
     read_flow_file,
@@ -44,6 +45,9 @@ DEFAULT_TIMEOUT = 7.0
 MAX_SUBFLOW_DEPTH = 20
 
 _FALSY = {"", "false", "0", "undefined", "null", "nan"}
+_READ_ONLY_COMMANDS = frozenset(
+    {"assertVisible", "assertNotVisible", "assertDarkMode", "assertLightMode"}
+)
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,7 @@ class FlowRunner:
         env: dict[str, str] | None = None,
         artifacts_dir: str | Path = "artifacts",
         poll_interval: float = 0.25,
+        screen_cache_ttl: float = 1.0,
         transliterate: bool = False,
         echo: Callable[[str], None] = print,
     ) -> None:
@@ -125,8 +130,10 @@ class FlowRunner:
         self.env = dict(env or {})
         self.artifacts_dir = Path(artifacts_dir)
         self.poll_interval = poll_interval
+        self.screen_cache_ttl = screen_cache_ttl
         self.transliterate = transliterate
         self.echo = echo
+        self._screen_cache: tuple[float, list[UiElement]] | None = None
         self._app_id: str | None = None
         self._flow_depth = 0
         self._launch_count = 0
@@ -195,7 +202,7 @@ class FlowRunner:
     # ------------------------------------------------------------------
 
     def _build_env(self, config: FlowConfig) -> dict[str, str]:
-        return {**_env_from_os(), **config.env, **self.env}
+        return {**load_env_file(".env"), **_env_from_os(), **config.env, **self.env}
 
     def load_flow(
         self, path: str | Path
@@ -220,6 +227,7 @@ class FlowRunner:
         self._app_id = config.app_id
         self._env = self._build_env(config)
         self._copied_text = None
+        self._screen_cache = None
         self._base_dir = flow_path.resolve().parent
 
         recording_proc = None
@@ -317,6 +325,9 @@ class FlowRunner:
                 self.echo(f"       (optional) {command.name} ignored: {exc}")
                 return
             raise
+        finally:
+            if command.name not in _READ_ONLY_COMMANDS:
+                self._screen_cache = None
 
     def _capture_failure(self, flow_path: Path, index: int) -> None:
         """Save a screenshot and the screen hierarchy at the moment of failure."""
@@ -339,8 +350,15 @@ class FlowRunner:
     # Reading the screen
     # ------------------------------------------------------------------
 
-    def _elements(self) -> list[UiElement]:
-        return parse_elements(self.driver.dump_hierarchy())
+    def _elements(self, *, fresh: bool = False) -> list[UiElement]:
+        if not fresh and self.screen_cache_ttl > 0 and self._screen_cache is not None:
+            cached_at, cached_elements = self._screen_cache
+            if (time.monotonic() - cached_at) < self.screen_cache_ttl:
+                return cached_elements
+        elements = parse_elements(self.driver.dump_hierarchy())
+        if self.screen_cache_ttl > 0:
+            self._screen_cache = (time.monotonic(), elements)
+        return elements
 
     def _subst(self, text: str) -> str:
         """Replace ``${maestro.copiedText}`` with the text copied at run time."""
@@ -387,11 +405,12 @@ class FlowRunner:
         """Poll the screen until the element is present/absent or the timeout."""
         selector = self._resolve_selector(selector)
         deadline = time.monotonic() + timeout
+        fresh = False
         while True:
             error: AndroidError | None = None
             element: UiElement | None = None
             try:
-                element = find_element(self._elements(), selector)
+                element = find_element(self._elements(fresh=fresh), selector)
             except AndroidError as exc:
                 error = exc
             else:
@@ -401,6 +420,7 @@ class FlowRunner:
                 if error is not None:
                     raise FlowError(f"Failed to read the screen: {error}") from error
                 return False, element
+            fresh = True
             time.sleep(self.poll_interval)
 
     def _find(self, selector: Selector, timeout: float) -> UiElement | None:
@@ -613,7 +633,7 @@ class FlowRunner:
         try:
             return [
                 (e.text, e.content_desc, e.resource_id, e.bounds, e.checked, e.selected)
-                for e in self._elements()
+                for e in self._elements(fresh=True)
             ]
         except AndroidError:
             return None
@@ -734,6 +754,7 @@ class FlowRunner:
             if time.monotonic() >= deadline:
                 break
             self.driver.scroll(spec["direction"])
+            self._screen_cache = None
             time.sleep(self.poll_interval)
         raise FlowError(
             f"scrollUntilVisible: element not found after scrolling "
