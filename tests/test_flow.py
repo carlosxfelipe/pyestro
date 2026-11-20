@@ -270,3 +270,55 @@ class TestInterpolation:
     def test_arbitrary_javascript_is_rejected(self):
         with pytest.raises(FlowError, match="not supported"):
             interpolate_string("${A.toUpperCase()}", {"A": "x"})
+
+
+class TestDeviceAndThemeCommands:
+    def test_valid_device_and_theme_commands(self, write_flow):
+        _, commands = compile_text(
+            write_flow,
+            "appId: a.b\n---\n"
+            "- setPermissions:\n    permissions:\n      camera: allow\n"
+            "- setOrientation: landscape_left\n"
+            "- setAirplaneMode: enabled\n"
+            "- toggleAirplaneMode\n"
+            "- addMedia:\n    - ./photo.png\n"
+            "- setDarkMode: true\n"
+            "- toggleDarkMode\n"
+            "- assertDarkMode\n"
+            "- assertLightMode\n",
+        )
+        assert commands[0].spec == {
+            "appId": None,
+            "permissions": {"camera": "allow"},
+        }
+        assert commands[1].spec == {"orientation": "LANDSCAPE_LEFT"}
+        assert commands[2].spec == {"enabled": True}
+        assert commands[3].name == "toggleAirplaneMode"
+        assert commands[4].spec == {"files": ["./photo.png"]}
+        assert commands[5].spec == {"enabled": True}
+        assert [c.name for c in commands[6:]] == [
+            "toggleDarkMode",
+            "assertDarkMode",
+            "assertLightMode",
+        ]
+
+    @pytest.mark.parametrize(
+        "yaml_cmd",
+        [
+            "- setPermissions",
+            "- setPermissions:\n    appId: a.b",
+            "- setPermissions:\n    permissions: {}\n",
+            "- setPermissions:\n    permissions:\n      all: allow\n    extra: 1",
+            "- setOrientation: DIAGONAL",
+            "- setOrientation: 123",
+            "- setAirplaneMode: true",
+            "- setAirplaneMode: maybe",
+            "- addMedia: []",
+            "- addMedia: photo.png",
+            "- setDarkMode",
+            "- setDarkMode: dark",
+        ],
+    )
+    def test_invalid_device_and_theme_commands_rejected(self, write_flow, yaml_cmd):
+        with pytest.raises(FlowError):
+            compile_text(write_flow, f"appId: a.b\n---\n{yaml_cmd}\n")

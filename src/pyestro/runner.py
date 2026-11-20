@@ -130,6 +130,7 @@ class FlowRunner:
             "stopApp": self._stop_app,
             "killApp": self._stop_app,
             "clearState": self._clear_state,
+            "setPermissions": self._set_permissions,
             "tapOn": self._tap_on,
             "doubleTapOn": self._tap_on,
             "longPressOn": self._tap_on,
@@ -154,6 +155,18 @@ class FlowRunner:
             "takeScreenshot": self._take_screenshot,
             "startRecording": self._start_recording,
             "stopRecording": self._stop_recording,
+            "setOrientation": lambda c: self.driver.set_orientation(
+                c.spec["orientation"]
+            ),
+            "setAirplaneMode": lambda c: self.driver.set_airplane_mode(
+                c.spec["enabled"]
+            ),
+            "toggleAirplaneMode": lambda _c: self.driver.toggle_airplane_mode(),
+            "addMedia": self._add_media,
+            "setDarkMode": lambda c: self.driver.set_dark_mode(c.spec["enabled"]),
+            "toggleDarkMode": lambda _c: self.driver.toggle_dark_mode(),
+            "assertDarkMode": self._assert_dark_mode,
+            "assertLightMode": self._assert_light_mode,
             "repeat": self._repeat,
             "retry": self._retry,
             "runFlow": self._run_flow,
@@ -417,6 +430,26 @@ class FlowRunner:
 
     def _clear_state(self, command: Command) -> None:
         self.driver.clear_app(self._target_app(command))
+
+    def _set_permissions(self, command: Command) -> None:
+        self._apply_permissions(self._target_app(command), command.spec["permissions"])
+
+    def _add_media(self, command: Command) -> None:
+        for raw in command.spec["files"]:
+            path = Path(raw)
+            if not path.is_absolute():
+                path = self._base_dir / path
+            if not path.is_file():
+                raise FlowError(f"addMedia: file not found: {path}")
+            self.driver.add_media(path)
+
+    def _assert_dark_mode(self, _command: Command) -> None:
+        if not self.driver.is_dark_mode():
+            raise FlowError("Expected device to be in dark mode.")
+
+    def _assert_light_mode(self, _command: Command) -> None:
+        if self.driver.is_dark_mode():
+            raise FlowError("Expected device to be in light mode.")
 
     def _clear_keychain(self, _command: Command) -> None:
         self.echo("       clearKeychain is iOS-specific; ignored on Android.")

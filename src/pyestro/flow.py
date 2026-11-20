@@ -123,14 +123,10 @@ UNSUPPORTED_COMMANDS = frozenset(
         "runScript",
         "copyTextFrom",
         "pasteText",
+        "setClipboard",
         "setLocation",
-        "setOrientation",
-        "setAirplaneMode",
-        "toggleAirplaneMode",
         "travel",
-        "addMedia",
         "openBrowser",
-        "setPermissions",
     }
 )
 
@@ -151,6 +147,9 @@ CONFIG_KEYS = frozenset(
 )
 
 DIRECTIONS = frozenset({"UP", "DOWN", "LEFT", "RIGHT"})
+ORIENTATIONS = frozenset(
+    {"PORTRAIT", "LANDSCAPE_LEFT", "LANDSCAPE_RIGHT", "UPSIDE_DOWN"}
+)
 _TAP_EXTRAS = frozenset(
     {
         "optional",
@@ -286,6 +285,15 @@ def _label(cmd: str, value: dict[str, Any]) -> str | None:
     return None if label is None else _text(cmd, "label", label)
 
 
+def _parse_permissions(cmd: str, perms: Any) -> dict[str, str]:
+    if not isinstance(perms, dict):
+        raise FlowError(f"{cmd}: permissions must be a map (e.g., all: allow).")
+    for name, setting in perms.items():
+        if str(setting).lower() not in ("allow", "deny", "unset"):
+            raise FlowError(f"{cmd}: permissions.{name} must be allow, deny, or unset.")
+    return {str(k): str(v).lower() for k, v in perms.items()}
+
+
 def _p_launch_app(cmd: str, value: Any) -> Parsed:
     spec: dict[str, Any] = {
         "appId": None,
@@ -329,19 +337,28 @@ def _p_launch_app(cmd: str, value: Any) -> Parsed:
             if key in value:
                 spec[key] = _bool(cmd, key, value[key])
         if "permissions" in value:
-            perms = value["permissions"]
-            if not isinstance(perms, dict):
-                raise FlowError(f"{cmd}: permissions must be a map (e.g., all: allow).")
-            for name, setting in perms.items():
-                if str(setting).lower() not in ("allow", "deny", "unset"):
-                    raise FlowError(
-                        f"{cmd}: permissions.{name} must be allow, deny, or unset."
-                    )
-            spec["permissions"] = {str(k): str(v).lower() for k, v in perms.items()}
+            spec["permissions"] = _parse_permissions(cmd, value["permissions"])
         label = _label(cmd, value)
     elif value is not None:
         raise FlowError(f"{cmd}: use '- launchApp', an appId, or a map.")
     return spec, label, False
+
+
+def _p_set_permissions(cmd: str, value: Any) -> Parsed:
+    if not isinstance(value, dict):
+        raise FlowError(f"{cmd}: provide a map with 'permissions'.")
+    _check_keys(cmd, value, {"appId", "permissions", "label"})
+    if "permissions" not in value or not value["permissions"]:
+        raise FlowError(f"{cmd}: provide 'permissions'.")
+    app_id = _text(cmd, "appId", value["appId"]) if "appId" in value else None
+    return (
+        {
+            "appId": app_id,
+            "permissions": _parse_permissions(cmd, value["permissions"]),
+        },
+        _label(cmd, value),
+        False,
+    )
 
 
 def _p_app_target(cmd: str, value: Any) -> Parsed:
@@ -693,11 +710,49 @@ def _p_run_flow(cmd: str, value: Any) -> Parsed:
     return spec, _label(cmd, value), False
 
 
+def _p_set_orientation(cmd: str, value: Any) -> Parsed:
+    if not isinstance(value, str):
+        allowed = ", ".join(sorted(ORIENTATIONS))
+        raise FlowError(f"{cmd}: provide orientation ({allowed}).")
+    orientation = value.strip().upper()
+    if orientation not in ORIENTATIONS:
+        allowed = ", ".join(sorted(ORIENTATIONS))
+        raise FlowError(f"{cmd}: orientation must be one of: {allowed}.")
+    return {"orientation": orientation}, None, False
+
+
+def _p_set_airplane_mode(cmd: str, value: Any) -> Parsed:
+    if not isinstance(value, str) or value.strip().lower() not in (
+        "enabled",
+        "disabled",
+    ):
+        raise FlowError(f"{cmd}: provide 'enabled' or 'disabled'.")
+    return {"enabled": value.strip().lower() == "enabled"}, None, False
+
+
+def _p_add_media(cmd: str, value: Any) -> Parsed:
+    if not isinstance(value, list) or not value:
+        raise FlowError(f"{cmd}: provide a non-empty list of media file paths.")
+    files: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise FlowError(f"{cmd}: each media entry must be a file path string.")
+        files.append(item.strip())
+    return {"files": files}, None, False
+
+
+def _p_set_dark_mode(cmd: str, value: Any) -> Parsed:
+    if value is None:
+        raise FlowError(f"{cmd}: provide true or false.")
+    return {"enabled": _bool(cmd, cmd, value)}, None, False
+
+
 _PARSERS = {
     "launchApp": _p_launch_app,
     "stopApp": _p_app_target,
     "killApp": _p_app_target,
     "clearState": _p_app_target,
+    "setPermissions": _p_set_permissions,
     "tapOn": _p_tap,
     "doubleTapOn": _p_tap,
     "longPressOn": _p_tap,
@@ -722,6 +777,14 @@ _PARSERS = {
     "takeScreenshot": _p_screenshot,
     "startRecording": _p_start_recording,
     "stopRecording": _p_noarg,
+    "setOrientation": _p_set_orientation,
+    "setAirplaneMode": _p_set_airplane_mode,
+    "toggleAirplaneMode": _p_noarg,
+    "addMedia": _p_add_media,
+    "setDarkMode": _p_set_dark_mode,
+    "toggleDarkMode": _p_noarg,
+    "assertDarkMode": _p_noarg,
+    "assertLightMode": _p_noarg,
     "repeat": _p_repeat,
     "retry": _p_retry,
     "runFlow": _p_run_flow,

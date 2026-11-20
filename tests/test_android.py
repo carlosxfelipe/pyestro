@@ -266,3 +266,74 @@ def test_remote_temp_paths_are_unique_per_instance():
     assert a._hierarchy_remote != b._hierarchy_remote
     assert a._record_remote.startswith("/sdcard/pyestro_record_")
     assert a._hierarchy_remote.startswith("/sdcard/pyestro-window-")
+
+
+def test_set_orientation_clears_cached_screen_size(driver: AndroidDriver):
+    driver._cached_screen_size = (1080, 2400)
+    driver.set_orientation("LANDSCAPE_RIGHT")
+    assert driver._cached_screen_size is None
+    assert driver.calls == [
+        ("settings", "put", "system", "accelerometer_rotation", "0"),
+        ("settings", "put", "system", "user_rotation", "3"),
+    ]
+
+
+def test_toggle_airplane_mode(driver: AndroidDriver):
+    driver.shell_output = "disabled"
+    assert driver.toggle_airplane_mode() is True
+    assert driver.calls == [
+        ("cmd", "connectivity", "airplane-mode"),
+        ("cmd", "connectivity", "airplane-mode", "enable"),
+    ]
+
+
+def test_set_airplane_mode_falls_back_to_settings(
+    driver: AndroidDriver, monkeypatch: pytest.MonkeyPatch
+):
+    calls: list[tuple[str, ...]] = []
+
+    def fake_shell(*args, timeout=30):
+        calls.append(args)
+        if args[:3] == ("cmd", "connectivity", "airplane-mode"):
+            raise AndroidError("unknown command")
+        return ""
+
+    monkeypatch.setattr(driver, "shell", fake_shell)
+    driver.set_airplane_mode(False)
+    assert calls[1] == ("settings", "put", "global", "airplane_mode_on", "0")
+    assert calls[2][:3] == ("am", "broadcast", "-a")
+
+
+def test_add_media_pushes_and_scans(
+    driver: AndroidDriver, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"png")
+    pushed: list[list[str]] = []
+    monkeypatch.setattr(
+        driver, "_run", lambda args, timeout=30: pushed.append(args) or b""
+    )
+    remote = driver.add_media(photo)
+    assert remote == "/sdcard/Pictures/photo.png"
+    assert pushed == [["push", str(photo), "/sdcard/Pictures/photo.png"]]
+    assert driver.calls == [
+        (
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d",
+            "file:///sdcard/Pictures/photo.png",
+        )
+    ]
+
+
+def test_dark_mode_commands(driver: AndroidDriver):
+    driver.shell_output = "Night mode: no"
+    assert driver.is_dark_mode() is False
+    assert driver.toggle_dark_mode() is True
+    assert driver.calls == [
+        ("cmd", "uimode", "night"),
+        ("cmd", "uimode", "night"),
+        ("cmd", "uimode", "night", "yes"),
+    ]

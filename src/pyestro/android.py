@@ -591,6 +591,108 @@ class AndroidDriver:
         self._check_app_id(app_id)
         self.shell("pm", "revoke", app_id, self._normalize_permission(permission))
 
+    _ORIENTATIONS: dict[str, str] = {
+        "PORTRAIT": "0",
+        "LANDSCAPE_LEFT": "1",
+        "UPSIDE_DOWN": "2",
+        "LANDSCAPE_RIGHT": "3",
+    }
+
+    def set_orientation(self, orientation: str) -> None:
+        """Lock auto-rotation and set the device rotation via settings."""
+        code = self._ORIENTATIONS.get(orientation.upper())
+        if code is None:
+            raise ValueError(f"Unknown orientation: {orientation}")
+        self.shell("settings", "put", "system", "accelerometer_rotation", "0")
+        self.shell("settings", "put", "system", "user_rotation", code)
+        self._cached_screen_size = None
+
+    def set_airplane_mode(self, enabled: bool) -> None:
+        """Enable or disable airplane mode via ADB."""
+        mode = "enable" if enabled else "disable"
+        try:
+            self.shell("cmd", "connectivity", "airplane-mode", mode)
+        except AndroidError:
+            self.shell(
+                "settings",
+                "put",
+                "global",
+                "airplane_mode_on",
+                "1" if enabled else "0",
+            )
+            self.shell(
+                "am",
+                "broadcast",
+                "-a",
+                "android.intent.action.AIRPLANE_MODE",
+                "--ez",
+                "state",
+                "true" if enabled else "false",
+            )
+
+    def get_airplane_mode(self) -> bool:
+        """Return True when airplane mode is enabled."""
+        try:
+            output = self.shell("cmd", "connectivity", "airplane-mode").strip().lower()
+            if "enabled" in output:
+                return True
+            if "disabled" in output:
+                return False
+        except AndroidError:
+            pass
+        val = self.shell("settings", "get", "global", "airplane_mode_on").strip()
+        return val == "1"
+
+    def toggle_airplane_mode(self) -> bool:
+        """Toggle airplane mode and return the new state."""
+        target = not self.get_airplane_mode()
+        self.set_airplane_mode(target)
+        return target
+
+    def add_media(self, local_path: Path) -> str:
+        """Push an image or video to the device gallery and trigger MediaScanner."""
+        path = Path(local_path)
+        if not path.is_file():
+            raise AndroidError(f"Media file not found: {path}")
+        remote_dir = (
+            "/sdcard/Movies" if path.suffix.lower() == ".mp4" else "/sdcard/Pictures"
+        )
+        remote = f"{remote_dir}/{path.name}"
+        self._run(["push", str(path), remote], timeout=60)
+        self.shell(
+            "am",
+            "broadcast",
+            "-a",
+            "android.intent.action.MEDIA_SCANNER_SCAN_FILE",
+            "-d",
+            shlex.quote(f"file://{remote}"),
+        )
+        return remote
+
+    def set_dark_mode(self, enabled: bool) -> None:
+        """Enable or disable system dark mode via cmd uimode."""
+        self.shell("cmd", "uimode", "night", "yes" if enabled else "no")
+
+    def is_dark_mode(self) -> bool:
+        """Return True when Android system dark mode is active."""
+        output = self.shell("cmd", "uimode", "night").strip().lower()
+        if "yes" in output:
+            return True
+        if "no" in output:
+            return False
+        dump = self.shell("dumpsys", "uimode").lower()
+        if "mcomputednightmode=true" in dump or "night=yes" in dump:
+            return True
+        if "mcomputednightmode=false" in dump or "night=no" in dump:
+            return False
+        raise AndroidError(f"Could not determine dark mode state: {output}")
+
+    def toggle_dark_mode(self) -> bool:
+        """Toggle system dark mode and return the new state."""
+        target = not self.is_dark_mode()
+        self.set_dark_mode(target)
+        return target
+
     def wake_up_and_unlock(self) -> None:
         """Wake the device screen and dismiss the lock if necessary."""
         self.shell("input", "keyevent", "KEYCODE_WAKEUP")

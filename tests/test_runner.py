@@ -344,3 +344,61 @@ def test_multiple_recordings_appear_in_html_report(write_flow, tmp_path):
     content = report_path.read_text(encoding="utf-8")
     assert "part1.mp4" in content
     assert "part2.mp4" in content
+
+
+def test_device_and_theme_commands_execution(write_flow, tmp_path):
+    class ThemeDriver(FakeDriver):
+        def __init__(self, dark: bool = False):
+            super().__init__()
+            self.dark = dark
+
+        def is_dark_mode(self) -> bool:
+            self.calls.append(("is_dark_mode",))
+            return self.dark
+
+    media = tmp_path / "pic.png"
+    media.write_bytes(b"png")
+    driver = ThemeDriver(dark=True)
+    flow = write_flow(
+        "appId: com.app\n---\n"
+        "- setPermissions:\n    permissions:\n      notifications: deny\n"
+        "- setOrientation: LANDSCAPE_LEFT\n"
+        "- setAirplaneMode: enabled\n"
+        "- toggleAirplaneMode\n"
+        "- addMedia:\n    - pic.png\n"
+        "- setDarkMode: true\n"
+        "- toggleDarkMode\n"
+        "- assertDarkMode\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    assert (
+        "revoke_permission",
+        "com.app",
+        "android.permission.POST_NOTIFICATIONS",
+    ) in driver.calls
+    assert ("set_orientation", "LANDSCAPE_LEFT") in driver.calls
+    assert ("set_airplane_mode", True) in driver.calls
+    assert ("toggle_airplane_mode",) in driver.calls
+    assert ("add_media", media.resolve()) in driver.calls
+    assert ("set_dark_mode", True) in driver.calls
+    assert ("toggle_dark_mode",) in driver.calls
+    assert ("is_dark_mode",) in driver.calls
+
+
+def test_assert_light_mode_fails_when_dark(write_flow, tmp_path):
+    class DarkDriver(FakeDriver):
+        def is_dark_mode(self) -> bool:
+            return True
+
+    flow = write_flow("appId: com.app\n---\n- assertLightMode\n")
+    result = runner(DarkDriver(), tmp_path).run(flow)
+    assert not result.ok
+    assert "light mode" in (result.steps[0].error or "")
+
+
+def test_add_media_missing_file_fails(write_flow, tmp_path):
+    flow = write_flow("appId: com.app\n---\n- addMedia:\n    - missing.png\n")
+    result = runner(FakeDriver(), tmp_path).run(flow)
+    assert not result.ok
+    assert "not found" in (result.steps[0].error or "")
