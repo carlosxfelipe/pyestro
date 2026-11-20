@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Maestro-compatible YAML flows for Android, run by Python over ADB."
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
   { name = "Carlos Felipe Araujo", email = "carlosxfelipe@gmail.com" },
 ]
