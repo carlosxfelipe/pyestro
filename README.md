@@ -126,6 +126,20 @@ env:
 - takeScreenshot: search
 ```
 
+## Example with an Android app
+
+For a complete example testing a real React Native / Expo app, see [expo-route-kit](https://github.com/carlosxfelipe/expo-route-kit) — a mobile starter template with `testID`s centralized in `src/constants/test-ids.ts` and a smoke flow at [`.maestro/smoke.yaml`](https://github.com/carlosxfelipe/expo-route-kit/blob/main/.maestro/smoke.yaml).
+
+Because E2E flows belong in the application repository rather than inside Pyestro, you run them from the app's root directory with the app installed on an emulator or device:
+
+```bash
+pyestro validate .maestro/smoke.yaml
+```
+
+```bash
+pyestro test .maestro/smoke.yaml
+```
+
 ## Supported commands
 
 - **App lifecycle & device:** `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op), `setPermissions`, `openLink`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `setDarkMode`, `toggleDarkMode`, `addMedia`, `setLocation` (emulators only), `travel` (emulators only)
