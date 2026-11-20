@@ -217,3 +217,130 @@ def test_invalid_flow_raises_before_running(write_flow, tmp_path):
     with pytest.raises(FlowError):
         runner(driver, tmp_path).run(flow)
     assert not driver.calls
+
+
+class _RecordingDriver(FakeDriver):
+    def __init__(self, *screens, fail_start: bool = False):
+        super().__init__(*screens)
+        self.fail_start = fail_start
+        self.next_id = 0
+
+    def start_recording(self, remote_path: str | None = None):
+        self.calls.append(("start_recording", remote_path))
+        if self.fail_start:
+            from pyestro.android import AndroidError
+
+            raise AndroidError("screenrecord unavailable")
+        self.next_id += 1
+        return f"proc-{self.next_id}"
+
+    def stop_recording(self, proc, destination, remote_path: str | None = None):
+        dest = Path(destination)
+        self.calls.append(("stop_recording", proc, dest, remote_path))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"mp4")
+        return dest
+
+
+def test_start_and_stop_recording_saves_under_artifacts(write_flow, tmp_path):
+    driver = _RecordingDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n"
+        "- startRecording:\n"
+        "    path: recordings/onboarding\n"
+        "    label: Capture onboarding\n"
+        "- back\n"
+        "- stopRecording\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    expected = tmp_path / "artifacts" / "recordings" / "onboarding.mp4"
+    assert result.video_path == expected
+    assert expected in result.artifacts
+    assert expected.read_bytes() == b"mp4"
+    names = [c[0] for c in driver.calls]
+    assert names == ["start_recording", "back", "stop_recording"]
+
+
+def test_stop_recording_without_active_recording_is_noop(write_flow, tmp_path):
+    driver = _RecordingDriver()
+    flow = write_flow("appId: a.b\n---\n- stopRecording\n- back\n")
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    assert not calls(driver, "stop_recording")
+    assert calls(driver, "back")
+
+
+def test_start_recording_optional_ignores_driver_failure(write_flow, tmp_path):
+    driver = _RecordingDriver(fail_start=True)
+    flow = write_flow(
+        "appId: a.b\n---\n"
+        "- startRecording:\n"
+        "    path: demo\n"
+        "    optional: true\n"
+        "- back\n"
+        "- stopRecording\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    assert calls(driver, "back")
+    assert not calls(driver, "stop_recording")
+
+
+def test_start_recording_non_optional_fails_on_driver_error(write_flow, tmp_path):
+    driver = _RecordingDriver(fail_start=True)
+    flow = write_flow("appId: a.b\n---\n- startRecording: demo\n- back\n")
+    result = runner(driver, tmp_path).run(flow)
+    assert not result.ok
+    assert result.skipped == 1
+    assert not calls(driver, "back")
+
+
+def test_start_recording_while_active_fails_unless_optional(write_flow, tmp_path):
+    driver = _RecordingDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n- startRecording: first.mp4\n- startRecording: second\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert not result.ok
+    assert "already in progress" in (result.steps[1].error or "")
+    # Flow cleanup in finally still stopped the first recording cleanly.
+    assert len(calls(driver, "stop_recording")) == 1
+    assert (tmp_path / "artifacts" / "first.mp4").is_file()
+
+
+def test_recording_stopped_and_saved_on_step_failure(write_flow, tmp_path):
+    driver = _RecordingDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n"
+        "- startRecording: failure_run\n"
+        "- assertVisible: Missing\n"
+        "- stopRecording\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert not result.ok
+    expected = tmp_path / "artifacts" / "failure_run.mp4"
+    assert expected.is_file()
+    assert expected in result.artifacts
+    assert len(calls(driver, "stop_recording")) == 1
+
+
+def test_multiple_recordings_appear_in_html_report(write_flow, tmp_path):
+    from pyestro.reports import generate_html_report
+
+    driver = _RecordingDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n"
+        "- startRecording: part1\n"
+        "- back\n"
+        "- stopRecording\n"
+        "- startRecording: part2\n"
+        "- back\n"
+        "- stopRecording\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    report_path = generate_html_report(result, tmp_path / "artifacts" / "report.html")
+    content = report_path.read_text(encoding="utf-8")
+    assert "part1.mp4" in content
+    assert "part2.mp4" in content

@@ -29,13 +29,13 @@ Use `pyestro validate flows/` to check the syntax without a device.
 
 ## Commands
 
-Supported: `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op on Android), `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `inputRandomText`, `inputRandomNumber`, `inputRandomEmail`, `inputRandomPersonName`, `eraseText`, `pressKey`, `hideKeyboard`, `back`, `scroll`, `scrollUntilVisible`, `swipe`, `openLink`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `waitForAnimationToEnd`, `takeScreenshot`, `repeat`, `retry`, `runFlow`.
+Supported: `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op on Android), `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `inputRandomText`, `inputRandomNumber`, `inputRandomEmail`, `inputRandomPersonName`, `eraseText`, `pressKey`, `hideKeyboard`, `back`, `scroll`, `scrollUntilVisible`, `swipe`, `openLink`, `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `waitForAnimationToEnd`, `takeScreenshot`, `startRecording`, `stopRecording`, `repeat`, `retry`, `runFlow`.
 
-Recognized but **not yet supported** (explicit error): `assertTrue`, `evalScript`, `runScript`, `copyTextFrom`, `pasteText`, `setLocation`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `travel`, `startRecording`, `stopRecording`, `addMedia`, `openBrowser`, `setPermissions`, `assertScreenshot` and the AI commands.
+Recognized but **not yet supported** (explicit error): `assertTrue`, `evalScript`, `runScript`, `copyTextFrom`, `pasteText`, `setLocation`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `travel`, `addMedia`, `openBrowser`, `setPermissions`, `assertScreenshot` and the AI commands.
 
 ## Known differences (do not affect syntax)
 
-- `takeScreenshot` saves to `artifacts/` (use an absolute `path` for another location).
+- `takeScreenshot` and `startRecording` save to `artifacts/` (use an absolute `path` for another location). `startRecording`/`stopRecording` use `adb shell screenrecord` (subject to Android's 180s per-recording limit).
 - Screen reading uses `uiautomator dump`, which is slower and less faithful than Maestro's driver; `waitToSettleTimeoutMs`, `speed` and `visibilityPercentage` are validated but ignored.
 - `inputText` only types ASCII via ADB; use `--transliterate` to strip accents.
 - `retryTapIfNoChange` defaults to `false`.

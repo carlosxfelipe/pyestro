@@ -19,24 +19,31 @@ Project derived from AndroFlow, without its custom syntax extensions (`waitFor`,
 
 ## Installation
 
-### Global CLI (recommended)
+### Global CLI (Recommended)
+
+You do not need to clone this repository or write Python code to test your apps. Pyestro works as a global command-line tool (similar to Maestro):
 
 ```bash
 uv tool install git+https://github.com/carlosxfelipe/pyestro.git
 ```
 
-### From source (local / development)
+> **PATH tip:** If the `pyestro` command is not recognized right after installation, run `uv tool update-shell` to configure your terminal.
 
-1. Clone the repository:
+To update Pyestro in the future with the latest changes from the repository:
+
+```bash
+uv tool upgrade pyestro
+```
+
+---
+
+### Local development (Contributors)
+
+To contribute to the Pyestro engine or run the library's unit tests:
 
 ```bash
 git clone https://github.com/carlosxfelipe/pyestro.git
 cd pyestro
-```
-
-2. Install dependencies with `uv`:
-
-```bash
 uv sync
 ```
 
@@ -122,7 +129,7 @@ env:
 - **Text input:** `inputText`, `inputRandomText`, `inputRandomNumber`, `inputRandomEmail`, `inputRandomPersonName`, `eraseText`
 - **Assertions & waits:** `assertVisible`, `assertNotVisible`, `extendedWaitUntil`, `waitForAnimationToEnd`
 - **Flow control & subflows:** `repeat` (`times` / `while`), `retry`, `runFlow` (`file` / `commands` / `when` / `env`)
-- **Media & header:** `takeScreenshot`, `onFlowStart`, `onFlowComplete`, `env`, `tags`, and `${VAR}` interpolation
+- **Media & header:** `takeScreenshot`, `startRecording`, `stopRecording`, `onFlowStart`, `onFlowComplete`, `env`, `tags`, and `${VAR}` interpolation
 
 For full syntax and compatibility details, see [docs/maestro_compat.md](docs/maestro_compat.md).
 
@@ -135,18 +142,52 @@ Inherited from AndroFlow (which also used plain ADB); these are not regressions:
 
 Differences from AndroFlow: the screen cache was removed, so flows with many consecutive assertions may be slightly slower. The `transliterate` option is no longer a YAML key (Maestro does not recognize it) and became the `--transliterate` CLI flag.
 
-## Development
+## Observability and CI/CD
 
-Run tests:
+Pyestro generates visual artifacts, screen recordings, and test reports in `artifacts/` by default:
+
+### 1. Screen Recording (`--record` / `-r`, `startRecording`, `stopRecording`)
+
+- **Full-flow recording via CLI:** records the entire flow run via `adb shell screenrecord` and saves `artifacts/<flow>.mp4`:
+  ```bash
+  pyestro test flows/settings_search.yaml --record
+  ```
+- **In-flow Maestro commands (`startRecording` / `stopRecording`):** record specific parts of a flow (relative paths are saved under `artifacts/` as `.mp4`):
+  ```yaml
+  - startRecording:
+      path: recordings/onboarding
+      label: Capture onboarding
+      optional: true
+  - tapOn: "Get Started"
+  - stopRecording
+  ```
+
+> **Duration limit:** Android's native `screenrecord` caps continuous recordings at 180 seconds (3 minutes). Pyestro prints a warning if a recording exceeds this limit.
+
+### 2. Test Reports (HTML and JUnit XML)
+
+Generate both an interactive, self-contained HTML report (`artifacts/report.html`) and a JUnit XML report (`artifacts/report.xml`):
+
+```bash
+pyestro test flows/ --report
+```
+
+Or specify custom output paths:
+
+```bash
+pyestro test flows/ --report-junit test-results/junit.xml --report-html artifacts/index.html
+```
+
+- **JUnit XML (`--report-junit`):** Standard format for CI/CD integration (GitHub Actions, GitLab CI, etc.).
+- **Interactive HTML Report (`--report-html`):** Self-contained report with summary metrics, per-step duration timeline, failure error details, embedded `.mp4` video player(s), and a screenshot gallery (from `takeScreenshot` and automatic failure captures `<flow>-failure-<step>.png` / `.xml`).
+
+## Development
 
 ```bash
 uv run pytest
-```
-
-Run linter:
-
-```bash
+uv run ruff format
 uv run ruff check
+uv run pyestro --help
 ```
 
 ## License

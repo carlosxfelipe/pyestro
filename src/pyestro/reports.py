@@ -98,21 +98,38 @@ def generate_html_report(
             else '<span class="badge badge-fail">FAIL</span>'
         )
 
-        video_block = ""
+        videos: list[Path] = []
         if flow.video_path and flow.video_path.is_file():
+            videos.append(flow.video_path)
+        for artifact in flow.artifacts:
+            if (
+                artifact.suffix.lower() == ".mp4"
+                and artifact.is_file()
+                and artifact not in videos
+            ):
+                videos.append(artifact)
+
+        video_blocks = []
+        for video in videos:
             try:
-                rel_video = flow.video_path.relative_to(dest.parent)
+                rel_video = video.relative_to(dest.parent)
             except ValueError:
-                rel_video = flow.video_path
-            video_block = f"""
+                rel_video = video
+            title = (
+                "Execution Recording"
+                if len(videos) == 1
+                else f"Execution Recording &mdash; {html.escape(video.name)}"
+            )
+            video_blocks.append(f"""
             <div class="video-container">
-                <h4>Execution Recording</h4>
+                <h4>{title}</h4>
                 <video controls preload="metadata">
                     <source src="{html.escape(str(rel_video))}" type="video/mp4">
                     Your browser does not support the video tag.
                 </video>
             </div>
-            """
+            """)
+        video_block = "".join(video_blocks)
 
         steps_rows = []
         for step in flow.steps:

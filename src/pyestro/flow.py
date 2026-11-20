@@ -125,8 +125,6 @@ UNSUPPORTED_COMMANDS = frozenset(
         "setAirplaneMode",
         "toggleAirplaneMode",
         "travel",
-        "startRecording",
-        "stopRecording",
         "addMedia",
         "openBrowser",
         "setPermissions",
@@ -556,6 +554,23 @@ def _p_screenshot(cmd: str, value: Any) -> Parsed:
     return {"path": value}, None, False
 
 
+def _p_start_recording(cmd: str, value: Any) -> Parsed:
+    if isinstance(value, dict):
+        _check_keys(cmd, value, {"path", "label", "optional"})
+        if "path" not in value:
+            raise FlowError(f"{cmd}: provide 'path'.")
+        path = _text(cmd, "path", value["path"])
+        if not path.strip():
+            raise FlowError(f"{cmd}: provide 'path'.")
+        optional = (
+            _bool(cmd, "optional", value["optional"]) if "optional" in value else False
+        )
+        return {"path": path}, _label(cmd, value), optional
+    if not isinstance(value, str) or not value.strip():
+        raise FlowError(f"{cmd}: provide the recording path.")
+    return {"path": value}, None, False
+
+
 def _parse_condition(cmd: str, value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or not value:
         raise FlowError(f"{cmd}: condition must be a map (visible, notVisible...).")
@@ -675,6 +690,8 @@ _PARSERS = {
     "openLink": _p_open_link,
     "extendedWaitUntil": _p_extended_wait,
     "takeScreenshot": _p_screenshot,
+    "startRecording": _p_start_recording,
+    "stopRecording": _p_noarg,
     "repeat": _p_repeat,
     "retry": _p_retry,
     "runFlow": _p_run_flow,

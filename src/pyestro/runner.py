@@ -4,6 +4,7 @@ import os
 import random
 import string
 import time
+import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -113,6 +114,7 @@ class FlowRunner:
         self._env: dict[str, str] = {}
         self._base_dir: Path = Path.cwd()
         self._current_result: FlowResult | None = None
+        self._active_recording: tuple[Any, Path, str, float] | None = None
         self._handlers: dict[str, Callable[[Command], None]] = {
             "launchApp": self._launch_app,
             "stopApp": self._stop_app,
@@ -140,6 +142,8 @@ class FlowRunner:
             "assertNotVisible": self._assert_not_visible,
             "extendedWaitUntil": self._extended_wait_until,
             "takeScreenshot": self._take_screenshot,
+            "startRecording": self._start_recording,
+            "stopRecording": self._stop_recording,
             "repeat": self._repeat,
             "retry": self._retry,
             "runFlow": self._run_flow,
@@ -184,6 +188,7 @@ class FlowRunner:
 
         result = FlowResult(path=flow_path, total=len(commands))
         self._current_result = result
+        self._active_recording = None
         flow_start = time.monotonic()
         self.echo(f"Pyestro: {flow_path} ({len(commands)} commands)")
         try:
@@ -195,19 +200,14 @@ class FlowRunner:
             self._run_hook("onFlowComplete", on_complete, flow_path, result)
         finally:
             result.duration = round(time.monotonic() - flow_start, 3)
+            if self._active_recording is not None:
+                self._stop_recording()
             if recording_proc is not None and hasattr(self.driver, "stop_recording"):
                 self.echo("Stopping screen recording...")
-                if result.duration > SCREENRECORD_MAX_SECONDS:
-                    self.echo(
-                        f"       Warning: the flow lasted {result.duration:.0f}s and "
-                        f"Android's screenrecord limits recording to "
-                        f"{SCREENRECORD_MAX_SECONDS}s; "
-                        f"the video only covers the beginning."
-                    )
+                self._warn_if_screenrecord_truncated(result.duration)
                 saved_video = self.driver.stop_recording(recording_proc, video_dest)
                 if saved_video:
-                    result.video_path = saved_video
-                    result.artifacts.append(saved_video)
+                    self._record_video_artifact(result, saved_video)
                     self.echo(f"       Execution video: {saved_video}")
             self._current_result = None
 
@@ -558,12 +558,32 @@ class FlowRunner:
             state = "appear" if present else "disappear"
             raise FlowError(f"Timeout waiting for element to {state}: {sel.describe()}")
 
-    def _take_screenshot(self, command: Command) -> None:
-        path = Path(command.spec["path"])
+    def _artifact_path(self, raw_path: str, extension: str) -> Path:
+        path = Path(raw_path)
         if not path.is_absolute():
             path = self.artifacts_dir / path
-        if path.suffix.lower() != ".png":
-            path = path.with_name(path.name + ".png")
+        if path.suffix.lower() != extension.lower():
+            path = path.with_name(path.name + extension)
+        return path
+
+    def _warn_if_screenrecord_truncated(self, elapsed: float) -> None:
+        if elapsed > SCREENRECORD_MAX_SECONDS:
+            self.echo(
+                f"       Warning: the recording lasted {elapsed:.0f}s and "
+                f"Android's screenrecord limits recording to "
+                f"{SCREENRECORD_MAX_SECONDS}s; "
+                f"the video only covers the beginning."
+            )
+
+    @staticmethod
+    def _record_video_artifact(result: FlowResult, path: Path) -> None:
+        if result.video_path is None:
+            result.video_path = path
+        if path not in result.artifacts:
+            result.artifacts.append(path)
+
+    def _take_screenshot(self, command: Command) -> None:
+        path = self._artifact_path(command.spec["path"], ".png")
         self.driver.screenshot(path)
         if (
             self._current_result is not None
@@ -571,6 +591,44 @@ class FlowRunner:
         ):
             self._current_result.artifacts.append(path)
         self.echo(f"       Screenshot: {path}")
+
+    def _start_recording(self, command: Command) -> None:
+        if self._active_recording is not None:
+            raise FlowError(
+                "startRecording: a recording is already in progress. "
+                "Call stopRecording first."
+            )
+        if not hasattr(self.driver, "start_recording"):
+            raise FlowError("startRecording: driver does not support recording.")
+        dest = self._artifact_path(command.spec["path"], ".mp4")
+        remote_path = f"/sdcard/pyestro_record_{uuid.uuid4().hex[:8]}.mp4"
+        try:
+            try:
+                proc = self.driver.start_recording(remote_path=remote_path)
+            except TypeError:
+                proc = self.driver.start_recording()
+        except (AndroidError, OSError) as exc:
+            raise FlowError(f"startRecording failed: {exc}") from exc
+        self._active_recording = (proc, dest, remote_path, time.monotonic())
+        self.echo(f"       Recording started: {dest}")
+
+    def _stop_recording(self, _command: Command | None = None) -> None:
+        if self._active_recording is None:
+            self.echo("       No active recording to stop.")
+            return
+        proc, dest, remote_path, started_at = self._active_recording
+        self._active_recording = None
+        self._warn_if_screenrecord_truncated(time.monotonic() - started_at)
+        try:
+            saved = self.driver.stop_recording(proc, dest, remote_path=remote_path)
+        except TypeError:
+            saved = self.driver.stop_recording(proc, dest)
+        if saved:
+            if self._current_result is not None:
+                self._record_video_artifact(self._current_result, saved)
+            self.echo(f"       Recording saved: {saved}")
+        elif proc is not None:
+            self.echo(f"       Warning: could not save recording to {dest}.")
 
     # ------------------------------------------------------------------
     # Control flow

@@ -460,9 +460,17 @@ class AndroidDriver:
         """Start recording the device screen via ADB screenrecord."""
         remote_path = remote_path or self._record_remote
         cmd = self._base_cmd() + ["shell", "screenrecord", remote_path]
-        return subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        try:
+            return subprocess.Popen(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except FileNotFoundError as exc:
+            raise AndroidError(
+                "ADB was not found. Install Android SDK Platform Tools and "
+                "add the adb executable to PATH."
+            ) from exc
+        except OSError as exc:
+            raise AndroidError(f"Could not start screen recording: {exc}") from exc
 
     def stop_recording(
         self,

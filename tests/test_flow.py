@@ -83,6 +83,12 @@ onFlowStart:
 - waitForAnimationToEnd:
     timeout: 3000
 - takeScreenshot: home
+- startRecording: session
+- startRecording:
+    path: recordings/onboarding
+    label: Capture onboarding
+    optional: true
+- stopRecording
 - openLink: https://example.com
 - repeat:
     times: 3
@@ -108,7 +114,7 @@ onFlowStart:
 """,
     )
     assert config.tags == ["smoke", "login"]
-    assert len(commands) == 27
+    assert len(commands) == 30
 
 
 @pytest.mark.parametrize(
@@ -210,6 +216,44 @@ def test_run_flow_inline_env_is_visible_to_nested_commands(write_flow):
         "      - inputText: ${NAME}\n",
     )
     assert commands[0].nested[0].spec["text"] == "Bia"
+
+
+class TestRecordingSyntax:
+    def test_start_recording_shorthand_and_map(self, write_flow):
+        _, commands = compile_text(
+            write_flow,
+            "appId: a.b\n---\n"
+            "- startRecording: demo\n"
+            "- startRecording:\n"
+            "    path: sub/clip\n"
+            "    label: Onboarding\n"
+            "    optional: true\n"
+            "- stopRecording\n"
+            "- stopRecording:\n"
+            "    label: Done\n",
+        )
+        assert commands[0].spec == {"path": "demo"}
+        assert not commands[0].optional
+        assert commands[1].spec == {"path": "sub/clip"}
+        assert commands[1].label == "Onboarding"
+        assert commands[1].optional is True
+        assert commands[2].name == "stopRecording"
+        assert commands[3].label == "Done"
+
+    @pytest.mark.parametrize(
+        "yaml_cmd",
+        [
+            "- startRecording",
+            "- startRecording: '   '",
+            "- startRecording:\n    label: Missing path",
+            "- startRecording:\n    path: '   '",
+            "- startRecording:\n    path: demo\n    unknown: 1",
+            "- stopRecording: demo",
+        ],
+    )
+    def test_invalid_recording_commands_are_rejected(self, write_flow, yaml_cmd):
+        with pytest.raises(FlowError):
+            compile_text(write_flow, f"appId: a.b\n---\n{yaml_cmd}\n")
 
 
 class TestInterpolation:

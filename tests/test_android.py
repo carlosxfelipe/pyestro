@@ -249,6 +249,17 @@ def test_start_and_stop_recording(
     assert ("rm", "-f", driver._record_remote) in driver.calls
 
 
+def test_start_recording_missing_adb_raises_android_error(
+    driver: AndroidDriver, monkeypatch: pytest.MonkeyPatch
+):
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("adb")
+
+    monkeypatch.setattr("subprocess.Popen", missing)
+    with pytest.raises(AndroidError, match="ADB was not found"):
+        driver.start_recording()
+
+
 def test_remote_temp_paths_are_unique_per_instance():
     a, b = AndroidDriver(), AndroidDriver()
     assert a._record_remote != b._record_remote
