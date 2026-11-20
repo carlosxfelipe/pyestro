@@ -402,3 +402,66 @@ def test_add_media_missing_file_fails(write_flow, tmp_path):
     result = runner(FakeDriver(), tmp_path).run(flow)
     assert not result.ok
     assert "not found" in (result.steps[0].error or "")
+
+
+def test_copy_text_from_then_paste_and_input_text(write_flow, tmp_path):
+    driver = FakeDriver(hierarchy(node("CODE-1234", rid="otp", bounds="[0,0][10,10]")))
+    flow = write_flow(
+        "appId: a.b\n---\n"
+        "- copyTextFrom:\n    id: otp\n"
+        "- pasteText\n"
+        "- inputText: 'Code: ${maestro.copiedText}'\n"
+    )
+    result = runner(driver, tmp_path).run(flow)
+    assert result.ok
+    assert calls(driver, "type_text") == [
+        ("type_text", "CODE-1234"),
+        ("type_text", "Code: CODE-1234"),
+    ]
+
+
+def test_copied_text_is_usable_in_selectors(write_flow, tmp_path):
+    driver = FakeDriver(
+        hierarchy(
+            node("TOKEN42", rid="src", bounds="[0,0][10,10]"),
+            node("TOKEN42", rid="dst", bounds="[0,20][10,30]"),
+        )
+    )
+    flow = write_flow(
+        "appId: a.b\n---\n"
+        "- copyTextFrom:\n    id: src\n"
+        "- assertVisible: '${maestro.copiedText}'\n"
+    )
+    assert runner(driver, tmp_path).run(flow).ok
+
+
+def test_set_clipboard_feeds_paste_text(write_flow, tmp_path):
+    driver = FakeDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n- setClipboard: hello@example.com\n- pasteText\n"
+    )
+    assert runner(driver, tmp_path).run(flow).ok
+    assert ("type_text", "hello@example.com") in driver.calls
+
+
+def test_paste_text_without_copy_fails(write_flow, tmp_path):
+    flow = write_flow("appId: a.b\n---\n- pasteText\n")
+    result = runner(FakeDriver(), tmp_path).run(flow)
+    assert not result.ok
+    assert "nothing to paste" in (result.steps[0].error or "")
+
+
+def test_copied_text_unset_fails_with_clear_message(write_flow, tmp_path):
+    flow = write_flow("appId: a.b\n---\n- inputText: ${maestro.copiedText}\n")
+    result = runner(FakeDriver(), tmp_path).run(flow)
+    assert not result.ok
+    assert "copyTextFrom or setClipboard" in (result.steps[0].error or "")
+
+
+def test_set_location_calls_driver(write_flow, tmp_path):
+    driver = FakeDriver()
+    flow = write_flow(
+        "appId: a.b\n---\n- setLocation:\n    latitude: 52.36\n    longitude: 4.88\n"
+    )
+    assert runner(driver, tmp_path).run(flow).ok
+    assert ("set_location", 52.36, 4.88) in driver.calls

@@ -328,6 +328,24 @@ def test_add_media_pushes_and_scans(
     ]
 
 
+def test_set_location_on_emulator(
+    driver: AndroidDriver, monkeypatch: pytest.MonkeyPatch
+):
+    driver.shell_output = "1"
+    sent: list[list[str]] = []
+    monkeypatch.setattr(
+        driver, "_run", lambda args, timeout=30: sent.append(args) or b"OK\n"
+    )
+    driver.set_location(52.36, 4.88)
+    assert sent == [["emu", "geo", "fix", "4.88", "52.36"]]
+
+
+def test_set_location_rejects_physical_device(driver: AndroidDriver):
+    driver.shell_output = ""
+    with pytest.raises(AndroidError, match="emulators"):
+        driver.set_location(1.0, 2.0)
+
+
 def test_dark_mode_commands(driver: AndroidDriver):
     driver.shell_output = "Night mode: no"
     assert driver.is_dark_mode() is False

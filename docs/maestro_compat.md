@@ -29,9 +29,9 @@ Use `pyestro validate flows/` to check the syntax without a device.
 
 ## Commands
 
-Supported: `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op on Android), `setPermissions`, `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `inputRandomText`, `inputRandomNumber`, `inputRandomEmail`, `inputRandomPersonName`, `eraseText`, `pressKey`, `hideKeyboard`, `back`, `scroll`, `scrollUntilVisible`, `swipe`, `openLink`, `assertVisible`, `assertNotVisible`, `assertDarkMode`, `assertLightMode`, `extendedWaitUntil`, `waitForAnimationToEnd`, `takeScreenshot`, `startRecording`, `stopRecording`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `setDarkMode`, `toggleDarkMode`, `addMedia`, `repeat`, `retry`, `runFlow`.
+Supported: `launchApp`, `stopApp`, `killApp`, `clearState`, `clearKeychain` (no-op on Android), `setPermissions`, `tapOn`, `doubleTapOn`, `longPressOn`, `inputText`, `inputRandomText`, `inputRandomNumber`, `inputRandomEmail`, `inputRandomPersonName`, `eraseText`, `pressKey`, `hideKeyboard`, `back`, `scroll`, `scrollUntilVisible`, `swipe`, `openLink`, `assertVisible`, `assertNotVisible`, `assertDarkMode`, `assertLightMode`, `extendedWaitUntil`, `waitForAnimationToEnd`, `takeScreenshot`, `startRecording`, `stopRecording`, `setOrientation`, `setAirplaneMode`, `toggleAirplaneMode`, `setDarkMode`, `toggleDarkMode`, `addMedia`, `copyTextFrom`, `pasteText`, `setClipboard`, `setLocation`, `repeat`, `retry`, `runFlow`.
 
-Recognized but **not yet supported** (explicit error): `assertTrue`, `evalScript`, `runScript`, `copyTextFrom`, `pasteText`, `setClipboard`, `setLocation`, `travel`, `openBrowser`, `assertScreenshot` and the AI commands.
+Recognized but **not yet supported** (explicit error): `assertTrue`, `evalScript`, `runScript`, `travel`, `openBrowser`, `assertScreenshot` and the AI commands.
 
 ## Known differences (do not affect syntax)
 
@@ -39,6 +39,8 @@ Recognized but **not yet supported** (explicit error): `assertTrue`, `evalScript
 - Screen reading uses `uiautomator dump`, which is slower and less faithful than Maestro's driver; `waitToSettleTimeoutMs`, `speed` and `visibilityPercentage` are validated but ignored.
 - `inputText` only types ASCII via ADB; use `--transliterate` to strip accents.
 - `retryTapIfNoChange` defaults to `false`.
+- `copyTextFrom`/`setClipboard` use Maestro's in-memory clipboard (not the Android system clipboard); `pasteText` types that text with `input text` (ASCII only). `${maestro.copiedText}` is supported in `inputText`, `openLink`, `setClipboard` and selector `text`/`id`; it fails if nothing was copied yet.
+- `setLocation` only works on emulators (`adb emu geo fix`); on a physical device it fails with a clear error.
 - Accepted without effect on Android via ADB: `launchApp: clearKeychain` (iOS-only) and `openLink: autoVerify`.
 - `optional: true` skips both assertion failures and ADB command errors for that step.
 - `runFlow` nesting is capped at 20 levels to fail cleanly on circular subflows.

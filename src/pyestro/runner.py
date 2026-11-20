@@ -7,12 +7,13 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
 from .android import SCREENRECORD_MAX_SECONDS, AndroidDriver, AndroidError, crop_png
 from .flow import (
+    COPIED_TEXT_TOKEN,
     Command,
     FlowConfig,
     FlowError,
@@ -121,6 +122,7 @@ class FlowRunner:
         self._app_id: str | None = None
         self._flow_depth = 0
         self._launch_count = 0
+        self._copied_text: str | None = None
         self._env: dict[str, str] = {}
         self._base_dir: Path = Path.cwd()
         self._current_result: FlowResult | None = None
@@ -167,6 +169,12 @@ class FlowRunner:
             "toggleDarkMode": lambda _c: self.driver.toggle_dark_mode(),
             "assertDarkMode": self._assert_dark_mode,
             "assertLightMode": self._assert_light_mode,
+            "copyTextFrom": self._copy_text_from,
+            "pasteText": self._paste_text,
+            "setClipboard": self._set_clipboard,
+            "setLocation": lambda c: self.driver.set_location(
+                c.spec["latitude"], c.spec["longitude"]
+            ),
             "repeat": self._repeat,
             "retry": self._retry,
             "runFlow": self._run_flow,
@@ -201,6 +209,7 @@ class FlowRunner:
         config, commands, on_start, on_complete = self.load_flow(flow_path)
         self._app_id = config.app_id
         self._env = self._build_env(config)
+        self._copied_text = None
         self._base_dir = flow_path.resolve().parent
 
         recording_proc = None
@@ -323,13 +332,50 @@ class FlowRunner:
     def _elements(self) -> list[UiElement]:
         return parse_elements(self.driver.dump_hierarchy())
 
+    def _subst(self, text: str) -> str:
+        """Replace ``${maestro.copiedText}`` with the text copied at run time."""
+        if COPIED_TEXT_TOKEN not in text:
+            return text
+        if self._copied_text is None:
+            raise FlowError(
+                "maestro.copiedText is not set: use copyTextFrom or setClipboard first."
+            )
+        return text.replace(COPIED_TEXT_TOKEN, self._copied_text)
+
+    def _resolve_selector(self, sel: Selector) -> Selector:
+        changes: dict[str, Any] = {}
+        for name in ("text", "id"):
+            value = getattr(sel, name)
+            if isinstance(value, str) and COPIED_TEXT_TOKEN in value:
+                changes[name] = self._subst(value)
+        for name in (
+            "below",
+            "above",
+            "left_of",
+            "right_of",
+            "contains_child",
+            "child_of",
+        ):
+            nested = getattr(sel, name)
+            if nested is not None:
+                resolved = self._resolve_selector(nested)
+                if resolved is not nested:
+                    changes[name] = resolved
+        if sel.contains_descendants:
+            originals = sel.contains_descendants
+            resolved_list = [self._resolve_selector(s) for s in originals]
+            if any(a is not b for a, b in zip(resolved_list, originals, strict=True)):
+                changes["contains_descendants"] = resolved_list
+        return replace(sel, **changes) if changes else sel
+
     def _find_now(self, selector: Selector) -> UiElement | None:
-        return find_element(self._elements(), selector)
+        return find_element(self._elements(), self._resolve_selector(selector))
 
     def _poll(
         self, selector: Selector, timeout: float, *, present: bool
     ) -> tuple[bool, UiElement | None]:
         """Poll the screen until the element is present/absent or the timeout."""
+        selector = self._resolve_selector(selector)
         deadline = time.monotonic() + timeout
         while True:
             error: AndroidError | None = None
@@ -492,7 +538,24 @@ class FlowRunner:
             return None
 
     def _input_text(self, command: Command) -> None:
-        self._type(command.spec["text"])
+        self._type(self._subst(command.spec["text"]))
+
+    def _copy_text_from(self, command: Command) -> None:
+        sel: Selector = command.spec["selector"]
+        element = self._find(sel, self.default_timeout)
+        if element is None:
+            raise FlowError(f"copyTextFrom: element not found: {sel.describe()}")
+        self._copied_text = element.text or element.content_desc or element.hint
+        self.echo(f"       Copied text: {self._copied_text!r}")
+
+    def _set_clipboard(self, command: Command) -> None:
+        self._copied_text = self._subst(command.spec["text"])
+
+    def _paste_text(self, _command: Command) -> None:
+        if self._copied_text is None:
+            raise FlowError("pasteText: nothing to paste (use copyTextFrom first).")
+        if self._copied_text:
+            self._type(self._copied_text)
 
     def _type(self, text: str) -> None:
         try:
@@ -597,10 +660,11 @@ class FlowRunner:
         )
 
     def _open_link(self, command: Command) -> None:
+        link = self._subst(command.spec["link"])
         if command.spec.get("browser"):
-            self.driver.open_link(command.spec["link"], browser=True)
+            self.driver.open_link(link, browser=True)
         else:
-            self.driver.open_link(command.spec["link"])
+            self.driver.open_link(link)
 
     def _assert_visible(self, command: Command) -> None:
         sel: Selector = command.spec["selector"]

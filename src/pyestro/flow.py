@@ -30,6 +30,12 @@ _EXPR_RE = re.compile(r"\$\{([^{}]*)\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
+# `${maestro.copiedText}` only exists at run time (after copyTextFrom or
+# setClipboard), so it is kept as-is while the flow is compiled and the runner
+# substitutes it when the command executes.
+COPIED_TEXT_EXPR = "maestro.copiedText"
+COPIED_TEXT_TOKEN = "${" + COPIED_TEXT_EXPR + "}"
+
 
 def _literal(expr: str) -> str | None:
     expr = expr.strip()
@@ -50,6 +56,8 @@ def _eval_expression(expr: str, env: dict[str, str]) -> str:
     Supports ``${VAR}``, ``${'text'}``, ``${VAR || 'default'}``, and
     ``${VAR ?? 'default'}``. Any other expression requires Maestro's JS engine.
     """
+    if expr.strip() == COPIED_TEXT_EXPR:
+        return COPIED_TEXT_TOKEN
     literal = _literal(expr)
     if literal is not None:
         return literal
@@ -121,10 +129,6 @@ UNSUPPORTED_COMMANDS = frozenset(
         "extractTextWithAI",
         "evalScript",
         "runScript",
-        "copyTextFrom",
-        "pasteText",
-        "setClipboard",
-        "setLocation",
         "travel",
         "openBrowser",
     }
@@ -747,6 +751,41 @@ def _p_set_dark_mode(cmd: str, value: Any) -> Parsed:
     return {"enabled": _bool(cmd, cmd, value)}, None, False
 
 
+def _p_set_clipboard(cmd: str, value: Any) -> Parsed:
+    if value is None or isinstance(value, dict | list):
+        raise FlowError(f"{cmd}: provide the text to put in the clipboard.")
+    return {"text": _text(cmd, "text", value)}, None, False
+
+
+def _coordinate(cmd: str, key: str, value: Any, limit: float) -> float:
+    if isinstance(value, bool):
+        raise FlowError(f"{cmd}: '{key}' must be a number.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise FlowError(f"{cmd}: '{key}' must be a number.") from None
+    if not -limit <= number <= limit:
+        raise FlowError(f"{cmd}: '{key}' must be between -{limit:g} and {limit:g}.")
+    return number
+
+
+def _p_set_location(cmd: str, value: Any) -> Parsed:
+    if not isinstance(value, dict):
+        raise FlowError(f"{cmd}: use a map with 'latitude' and 'longitude'.")
+    _check_keys(cmd, value, {"latitude", "longitude", "label"})
+    for key in ("latitude", "longitude"):
+        if key not in value:
+            raise FlowError(f"{cmd}: provide '{key}'.")
+    return (
+        {
+            "latitude": _coordinate(cmd, "latitude", value["latitude"], 90),
+            "longitude": _coordinate(cmd, "longitude", value["longitude"], 180),
+        },
+        _label(cmd, value),
+        False,
+    )
+
+
 _PARSERS = {
     "launchApp": _p_launch_app,
     "stopApp": _p_app_target,
@@ -785,6 +824,10 @@ _PARSERS = {
     "toggleDarkMode": _p_noarg,
     "assertDarkMode": _p_noarg,
     "assertLightMode": _p_noarg,
+    "copyTextFrom": _p_assert,
+    "pasteText": _p_noarg,
+    "setClipboard": _p_set_clipboard,
+    "setLocation": _p_set_location,
     "repeat": _p_repeat,
     "retry": _p_retry,
     "runFlow": _p_run_flow,

@@ -272,6 +272,49 @@ class TestInterpolation:
             interpolate_string("${A.toUpperCase()}", {"A": "x"})
 
 
+class TestClipboardAndLocation:
+    def test_valid_commands(self, write_flow):
+        _, commands = compile_text(
+            write_flow,
+            "appId: a.b\n---\n"
+            "- copyTextFrom:\n    id: otp\n    optional: true\n"
+            "- copyTextFrom: Total\n"
+            "- pasteText\n"
+            "- setClipboard: abc\n"
+            "- inputText: ${maestro.copiedText}\n"
+            "- setLocation:\n    latitude: -23.55\n    longitude: '-46.63'\n",
+        )
+        assert commands[0].optional is True
+        assert commands[2].name == "pasteText"
+        assert commands[3].spec == {"text": "abc"}
+        # Resolved at run time, so the token survives compilation.
+        assert commands[4].spec == {"text": "${maestro.copiedText}"}
+        assert commands[5].spec == {"latitude": -23.55, "longitude": -46.63}
+
+    @pytest.mark.parametrize(
+        "yaml_cmd",
+        [
+            "- copyTextFrom",
+            "- copyTextFrom:\n    point: 50%,50%",
+            "- pasteText: x",
+            "- setClipboard",
+            "- setClipboard:\n    text: a",
+            "- setLocation: 1,2",
+            "- setLocation:\n    latitude: 1",
+            "- setLocation:\n    latitude: 91\n    longitude: 0",
+            "- setLocation:\n    latitude: 0\n    longitude: abc",
+            "- setLocation:\n    latitude: 0\n    longitude: 0\n    alt: 1",
+        ],
+    )
+    def test_invalid_commands_rejected(self, write_flow, yaml_cmd):
+        with pytest.raises(FlowError):
+            compile_text(write_flow, f"appId: a.b\n---\n{yaml_cmd}\n")
+
+    def test_travel_is_still_reported_as_unsupported(self, write_flow):
+        with pytest.raises(FlowError, match="does not support yet"):
+            compile_text(write_flow, "appId: a.b\n---\n- travel:\n    points: []\n")
+
+
 class TestDeviceAndThemeCommands:
     def test_valid_device_and_theme_commands(self, write_flow):
         _, commands = compile_text(

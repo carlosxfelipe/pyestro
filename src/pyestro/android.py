@@ -669,6 +669,23 @@ class AndroidDriver:
         )
         return remote
 
+    def set_location(self, latitude: float, longitude: float) -> None:
+        """Mock the GPS position (emulators only, via the emulator console)."""
+        is_emulator = any(
+            self.shell("getprop", prop).strip() == "1"
+            for prop in ("ro.kernel.qemu", "ro.boot.qemu")
+        )
+        if not is_emulator:
+            raise AndroidError(
+                "setLocation via ADB only works on Android emulators "
+                "(it uses 'adb emu geo fix')."
+            )
+        output = _decode(
+            self._run(["emu", "geo", "fix", str(longitude), str(latitude)])
+        )
+        if "KO" in output:
+            raise AndroidError(f"Emulator rejected the location: {output}")
+
     def set_dark_mode(self, enabled: bool) -> None:
         """Enable or disable system dark mode via cmd uimode."""
         self.shell("cmd", "uimode", "night", "yes" if enabled else "no")
