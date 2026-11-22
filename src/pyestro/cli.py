@@ -58,9 +58,19 @@ def validate_flows(
         list[str] | None,
         typer.Option("--env", "-e", help="KEY=VALUE variable (repeatable)."),
     ] = None,
+    env_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--env-file",
+            help="Path to a .env file (defaults to nearest .env).",
+        ),
+    ] = None,
 ) -> None:
     """Validate the syntax of flows (Maestro format) without running them."""
-    runner = FlowRunner(AndroidDriver(), env=_parse_env(env), echo=typer.echo)
+    _ensure_env_file(env_file)
+    runner = FlowRunner(
+        AndroidDriver(), env=_parse_env(env), env_file=env_file, echo=typer.echo
+    )
     files = _collect_files(flows)
     if not files:
         typer.echo("No flow file (.yaml/.yml) found.", err=True)
@@ -128,6 +138,13 @@ def test_flow(
             help="Environment variable as KEY=VALUE (repeatable).",
         ),
     ] = None,
+    env_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--env-file",
+            help="Path to a .env file (defaults to nearest .env).",
+        ),
+    ] = None,
     fail_fast: Annotated[
         bool,
         typer.Option(
@@ -165,6 +182,7 @@ def test_flow(
     ] = False,
 ) -> None:
     """Run one or more YAML test flows."""
+    _ensure_env_file(env_file)
     driver: AndroidDriver = ctx.obj["driver"]
     saved_animations: dict[str, str] | None = None
     if disable_animations:
@@ -185,6 +203,7 @@ def test_flow(
             report_junit=report_junit,
             report_html=report_html,
             env=env,
+            env_file=env_file,
             fail_fast=fail_fast,
             include_tags=_split_tags(include_tags),
             exclude_tags=_split_tags(exclude_tags),
@@ -198,6 +217,12 @@ def test_flow(
                 driver.restore_animation_scales(saved_animations)
             except AndroidError as exc:
                 typer.echo(f"Warning: could not restore animations: {exc}")
+
+
+def _ensure_env_file(env_file: Path | None) -> None:
+    if env_file is not None and not env_file.is_file():
+        typer.echo(f"Env file not found: {env_file}", err=True)
+        raise typer.Exit(1)
 
 
 def _parse_env(env: list[str] | None) -> dict[str, str]:
@@ -258,6 +283,7 @@ def _run_suite(
     report_html: Path | None,
     env: list[str] | None,
     fail_fast: bool,
+    env_file: Path | None = None,
     include_tags: list[str] | None = None,
     exclude_tags: list[str] | None = None,
     transliterate: bool = False,
@@ -282,6 +308,7 @@ def _run_suite(
     runner = FlowRunner(
         driver,
         env=cli_env,
+        env_file=env_file,
         echo=typer.echo,
         transliterate=transliterate,
         screen_cache_ttl=0.0 if no_screen_cache else 1.0,

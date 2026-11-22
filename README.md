@@ -97,6 +97,7 @@ pyestro test flows/en/settings_search.yaml --record --report
 | --- | --- |
 | `-s`, `--serial` | Target a specific ADB device serial (global option before `devices`/`test`) |
 | `-e`, `--env` | Set environment variables as `KEY=VALUE` (repeatable) |
+| `--env-file` | Load variables from a specific `.env` file (defaults to nearest `.env` from the flow/working directory) |
 | `--include-tags` | Only run flows containing all listed tags (comma-separated) |
 | `--exclude-tags` | Skip flows containing any listed tag (comma-separated) |
 | `--fail-fast` | Stop the suite at the first failing flow |

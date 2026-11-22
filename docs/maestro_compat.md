@@ -23,7 +23,7 @@ Use `pyestro validate flows/` to check the syntax without a device.
 | `swipe: direction: UP` | The finger moves up (the content moves down). |
 | `scroll` / `scrollUntilVisible: DOWN` | Scrolls the content down. |
 | `launchApp` | `stopApp: true` and `permissions: {all: allow}` by default; `clearState`, per-group `permissions` (`notifications`, `location`, `camera`...), and `arguments` (passed as Android Intent extras via `am start`). |
-| `${VAR}` | Variables from `.env`, `MAESTRO_*` in the shell, the `env` header, and `-e` (CLI wins over header, which wins over `MAESTRO_*` and `.env`). Supports `${VAR}`, `${VAR \|\| 'default'}` and `${VAR ?? 'default'}`; other JS expressions are refused. |
+| `${VAR}` | Variables from `.env` (auto-discovered from the flow directory up to the project root, CWD, or `--env-file`), `MAESTRO_*` in the shell, the `env` header, and `-e` (CLI wins over header, which wins over `MAESTRO_*` and `.env`). Supports `${VAR}`, `${VAR \|\| 'default'}` and `${VAR ?? 'default'}`; other JS expressions are refused. |
 | `runFlow` | Path relative to the current file; the command's `env` applies to the subflow; `when` accepts `visible`, `notVisible`, `platform`, `true`. |
 | Header | `appId`, `name`, `tags`, `env`, `onFlowStart`, `onFlowComplete`; other Maestro keys are accepted and ignored. |
 

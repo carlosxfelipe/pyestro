@@ -276,15 +276,47 @@ class TestInterpolation:
 
         env_file = tmp_path / ".env"
         env_file.write_text(
-            "# comment\n\nHOST=https://api.local\nPASS='s3cr3t'\nUSER=\"ana\"\n",
+            "# comment\n\n"
+            "HOST=https://api.local#frag # inline note\n"
+            "export PASS='s3cr3t'\n"
+            'USER="ana # not comment"\n'
+            'GREETING="hi \\"world\\"" # trailing comment\n',
             encoding="utf-8",
         )
         assert load_env_file(env_file) == {
-            "HOST": "https://api.local",
+            "HOST": "https://api.local#frag",
             "PASS": "s3cr3t",
-            "USER": "ana",
+            "USER": "ana # not comment",
+            "GREETING": 'hi "world"',
         }
         assert load_env_file(tmp_path / "missing.env") == {}
+
+    def test_find_env_file_walks_up_and_stops_at_project_root(self, tmp_path):
+        from pyestro.flow import find_env_file, resolve_dotenv
+
+        # Outer .env outside project root must not leak past .git boundary.
+        (tmp_path / ".env").write_text("LEAK=outer\n", encoding="utf-8")
+        project = tmp_path / "app"
+        (project / ".git").mkdir(parents=True)
+        nested_flow = project / ".maestro" / "sub" / "smoke.yaml"
+        nested_flow.parent.mkdir(parents=True)
+        nested_flow.write_text("appId: a.b\n---\n- launchApp\n", encoding="utf-8")
+
+        assert find_env_file(nested_flow) is None
+
+        project_env = project / ".env"
+        project_env.write_text("API_URL=https://staging.local\n", encoding="utf-8")
+        assert find_env_file(nested_flow) == project_env.resolve()
+        assert resolve_dotenv(nested_flow) == {"API_URL": "https://staging.local"}
+
+        custom_env = project / ".env.prod"
+        custom_env.write_text("API_URL=https://prod.local\n", encoding="utf-8")
+        assert resolve_dotenv(nested_flow, custom_env) == {
+            "API_URL": "https://prod.local"
+        }
+
+        with pytest.raises(FlowError, match="Env file not found"):
+            resolve_dotenv(nested_flow, project / "missing.env")
 
 
 class TestClipboardAndLocation:

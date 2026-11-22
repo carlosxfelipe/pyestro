@@ -100,6 +100,36 @@ def interpolate_string(text: str, env: dict[str, str]) -> str:
     return _EXPR_RE.sub(lambda m: _eval_expression(m.group(1), env), text)
 
 
+_PROJECT_MARKERS = (".git", "pyproject.toml", "package.json")
+
+
+def _parse_env_value(raw_val: str) -> str:
+    """Parse a single .env value, handling quotes, escapes, and inline comments."""
+    val = raw_val.strip()
+    if not val:
+        return ""
+    if val[0] in ("'", '"'):
+        quote = val[0]
+        chars: list[str] = []
+        escaped = False
+        for ch in val[1:]:
+            if quote == '"' and escaped:
+                chars.append({"n": "\n", "r": "\r", "t": "\t"}.get(ch, ch))
+                escaped = False
+                continue
+            if quote == '"' and ch == "\\":
+                escaped = True
+                continue
+            if ch == quote:
+                return "".join(chars)
+            chars.append(ch)
+        return val[1:]
+    for idx, ch in enumerate(val):
+        if ch == "#" and idx > 0 and val[idx - 1].isspace():
+            return val[:idx].rstrip()
+    return val
+
+
 def load_env_file(path: str | Path = ".env") -> dict[str, str]:
     """Load KEY=VALUE pairs from a ``.env`` file if it exists."""
     env_vars: dict[str, str] = {}
@@ -108,16 +138,60 @@ def load_env_file(path: str | Path = ".env") -> dict[str, str]:
         return env_vars
     for raw_line in env_path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+        if not line or line.startswith("#"):
             continue
-        key, val = line.split("=", 1)
+        if line.startswith(("export ", "export\t")):
+            line = line[6:].lstrip()
+        if "=" not in line:
+            continue
+        key, raw_val = line.split("=", 1)
         key = key.strip()
-        val = val.strip()
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
-            val = val[1:-1]
         if key:
-            env_vars[key] = val
+            env_vars[key] = _parse_env_value(raw_val)
     return env_vars
+
+
+def find_env_file(start: str | Path | None = None) -> Path | None:
+    """Find the nearest ``.env`` file from *start* up to the project root."""
+    base = Path(start).resolve() if start is not None else Path.cwd().resolve()
+    if base.is_file() or (not base.exists() and base.suffix in (".yaml", ".yml")):
+        base = base.parent
+    home = Path.home().resolve()
+    for directory in (base, *base.parents):
+        if directory == home and base != home:
+            break
+        candidate = directory / ".env"
+        if candidate.is_file():
+            return candidate
+        if any((directory / marker).exists() for marker in _PROJECT_MARKERS):
+            break
+        if directory == directory.parent:
+            break
+    return None
+
+
+def resolve_dotenv(
+    flow_path: str | Path | None = None,
+    env_file: str | Path | None = None,
+) -> dict[str, str]:
+    """Load ``.env`` variables from an explicit file or nearest discovered ``.env``."""
+    if env_file is not None:
+        explicit = Path(env_file)
+        if not explicit.is_file():
+            raise FlowError(f"Env file not found: {explicit}")
+        return load_env_file(explicit)
+
+    merged: dict[str, str] = {}
+    flow_env: Path | None = None
+    if flow_path is not None:
+        flow_env = find_env_file(flow_path)
+        if flow_env is not None:
+            merged.update(load_env_file(flow_env))
+
+    cwd_env = find_env_file(Path.cwd())
+    if cwd_env is not None and cwd_env != flow_env:
+        merged.update(load_env_file(cwd_env))
+    return merged
 
 
 def interpolate_data(

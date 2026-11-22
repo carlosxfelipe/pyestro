@@ -26,10 +26,10 @@ from .flow import (
     FlowConfig,
     FlowError,
     compile_commands,
-    load_env_file,
     parse_config,
     permission_names,
     read_flow_file,
+    resolve_dotenv,
 )
 from .selectors import (
     Selector,
@@ -119,6 +119,7 @@ class FlowRunner:
         default_timeout: float = DEFAULT_TIMEOUT,
         *,
         env: dict[str, str] | None = None,
+        env_file: str | Path | None = None,
         artifacts_dir: str | Path = "artifacts",
         poll_interval: float = 0.25,
         screen_cache_ttl: float = 1.0,
@@ -128,6 +129,7 @@ class FlowRunner:
         self.driver = driver
         self.default_timeout = default_timeout
         self.env = dict(env or {})
+        self.env_file = Path(env_file) if env_file is not None else None
         self.artifacts_dir = Path(artifacts_dir)
         self.poll_interval = poll_interval
         self.screen_cache_ttl = screen_cache_ttl
@@ -201,8 +203,15 @@ class FlowRunner:
     # Loading
     # ------------------------------------------------------------------
 
-    def _build_env(self, config: FlowConfig) -> dict[str, str]:
-        return {**load_env_file(".env"), **_env_from_os(), **config.env, **self.env}
+    def _build_env(
+        self, config: FlowConfig, flow_path: Path | None = None
+    ) -> dict[str, str]:
+        return {
+            **resolve_dotenv(flow_path, self.env_file),
+            **_env_from_os(),
+            **config.env,
+            **self.env,
+        }
 
     def load_flow(
         self, path: str | Path
@@ -211,7 +220,7 @@ class FlowRunner:
         flow_path = Path(path)
         header, raw_commands = read_flow_file(flow_path)
         config = parse_config(header)
-        env = self._build_env(config)
+        env = self._build_env(config, flow_path)
         commands = compile_commands(raw_commands, env)
         on_start = compile_commands(config.on_start, env, "onFlowStart › ")
         on_complete = compile_commands(config.on_complete, env, "onFlowComplete › ")
@@ -225,7 +234,7 @@ class FlowRunner:
         flow_path = Path(path)
         config, commands, on_start, on_complete = self.load_flow(flow_path)
         self._app_id = config.app_id
-        self._env = self._build_env(config)
+        self._env = self._build_env(config, flow_path)
         self._copied_text = None
         self._screen_cache = None
         self._base_dir = flow_path.resolve().parent

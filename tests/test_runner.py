@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from pyestro.flow import FlowError
 from pyestro.runner import FlowRunner
 
 from .conftest import FakeDriver, hierarchy, node
@@ -579,3 +580,52 @@ def test_dotenv_file_loaded_with_cli_and_header_precedence(
     driver2 = FakeDriver()
     assert runner(driver2, tmp_path, env={"USER": "from_cli"}).run(flow).ok
     assert ("type_text", "from_cli:abc") in driver2.calls
+
+
+def test_dotenv_discovered_from_flow_ancestor_and_explicit_env_file(
+    tmp_path, monkeypatch
+):
+    other_cwd = tmp_path / "elsewhere"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+
+    project = tmp_path / "project"
+    flow_dir = project / ".maestro"
+    flow_dir.mkdir(parents=True)
+    (project / ".env").write_text("USER=from_project_root\n", encoding="utf-8")
+    custom = project / ".env.staging"
+    custom.write_text("USER=from_staging\n", encoding="utf-8")
+
+    flow = flow_dir / "login.yaml"
+    flow.write_text("appId: a.b\n---\n- inputText: ${USER}\n", encoding="utf-8")
+
+    driver = FakeDriver()
+    assert runner(driver, tmp_path).run(flow).ok
+    assert ("type_text", "from_project_root") in driver.calls
+
+    driver2 = FakeDriver()
+    assert runner(driver2, tmp_path, env_file=custom).run(flow).ok
+    assert ("type_text", "from_staging") in driver2.calls
+
+    with pytest.raises(FlowError, match="Env file not found"):
+        runner(FakeDriver(), tmp_path, env_file=project / "nope.env").run(flow)
+
+
+def test_cli_validate_supports_env_file(tmp_path):
+    from typer.testing import CliRunner
+
+    from pyestro.cli import app
+
+    env_file = tmp_path / ".env.custom"
+    env_file.write_text("USER=alice\n", encoding="utf-8")
+    flow = tmp_path / "flow.yaml"
+    flow.write_text("appId: a.b\n---\n- inputText: ${USER}\n", encoding="utf-8")
+
+    cli = CliRunner()
+    res = cli.invoke(app, ["validate", str(flow), "--env-file", str(env_file)])
+    assert res.exit_code == 0, res.output
+
+    bad = cli.invoke(
+        app, ["validate", str(flow), "--env-file", str(tmp_path / "no.env")]
+    )
+    assert bad.exit_code == 1
