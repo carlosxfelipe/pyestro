@@ -11,6 +11,8 @@ A Python runner for YAML flows **100% compatible** with the [Maestro](https://do
 
 Project derived from AndroFlow, without its custom syntax extensions (`waitFor`, `sleep`, `contentDesc`, `contains`, etc.), which Maestro does not recognize.
 
+> **Looking for Web / React Native for Web?** Check out [Pyestro Web](https://github.com/carlosxfelipe/pyestro-web) — a Playwright-based sibling runner that executes the same Maestro YAML flows in real browsers.
+
 ## Requirements
 
 - **Python 3.12+**
